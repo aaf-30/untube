@@ -57,11 +57,11 @@ export interface GetVideoInfoOptions {
 }
 
 /**
- * Mendapatkan informasi video YouTube beserta streaming data (URL CDN)
- * yang sudah didekripsi otomatis.
+ * Get YouTube video information along with streaming data (CDN URL)
+ * that has been automatically decrypted.
  *
- * @param videoId - ID video YouTube
- * @param options - Konfigurasi opsional
+ * @param videoId - YouTube video ID
+ * @param options - Optional configuration
  * @returns Promise<VideoInfo>
  */
 async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}): Promise<VideoInfo> {
@@ -78,18 +78,15 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         'Cookie': cm.getCookieString(watchUrl) || '',
     }
 
-    // 1. Fetch halaman utama (Watch page)
     const pageRes = await fetch(watchUrl, { headers, dispatcher } as any)
     const pageHtml = await (pageRes as any).text()
 
-    // Update cookies
     const setCookies = (pageRes.headers as any).getSetCookie()
     if (setCookies && setCookies.length > 0) {
         setCookies.forEach((cookie: any) => cm.setCookieString(cookie, watchUrl))
         cm.save()
     }
 
-    // 2. Ekstrak ytcfg
     const ytcfgMatch = pageHtml.match(/ytcfg\.set\(\{([\s\S]*?)\}\);/)
     if (!ytcfgMatch) throw new Error('ytcfg not found in webpage')
 
@@ -97,7 +94,6 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     const apiKey = ytcfg.INNERTUBE_API_KEY
     const sts = ytcfg.STS
 
-    // Ekstrak ytInitialPlayerResponse untuk detail metadata yang lengkap
     let initialPlayerResponse: any = {}
     const initialPlayerMatch = pageHtml.match(/ytInitialPlayerResponse\s*=\s*(\{.*?\});/)
     if (initialPlayerMatch) {
@@ -106,7 +102,6 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         } catch {}
     }
 
-    // 3. Konfigurasi Client InnerTube TVHTML5
     const apiUrl = `https://www.youtube.com/youtubei/v1/player?key=${apiKey}&prettyPrint=false`
     const clientName = 'TVHTML5'
     const clientVersion = '5.20260114'
@@ -139,7 +134,6 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         'Cookie': cm.getCookieString(apiUrl) || '',
     }
 
-    // 4. Generate SAPISIDHASH Authorization (Jika file cookies memiliki SAPISID yang valid)
     const sapisidCookie = cm.jar.getCookiesSync(apiUrl).find((c: any) => c.key === 'SAPISID')
     if (sapisidCookie) {
         const timestamp = Math.floor(Date.now() / 1000).toString()
@@ -147,7 +141,6 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         apiHeaders.Authorization = `SAPISIDHASH ${timestamp}_${hash}`
     }
 
-    // 5. Fetch InnerTube API
     const apiRes = await fetch(apiUrl, {
         method: 'POST',
         headers: apiHeaders,
@@ -167,7 +160,6 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
 
     const json: any = await apiRes.json()
 
-    // 6. Dekripsi URL pada streamingData secara iteratif (Menerapkan solver yt-dlp)
     let preprocessedPlayerCache: any = null
     const getPreprocessedPlayer = async () => {
         if (preprocessedPlayerCache) return preprocessedPlayerCache
@@ -175,7 +167,6 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         const res = await fetch(playerUrl, { dispatcher } as any)
         const baseJs = await (res as any).text()
 
-        // Minta jsc untuk mem-parsing dan me-return preprocessed_player agar kita bisa cache
         const input = { type: 'player', player: baseJs, requests: [], output_preprocessed: true }
         const result: any = jsc(input)
 
@@ -191,7 +182,6 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     const sigChallenges: string[] = []
     const nChallenges: string[] = []
 
-    // 1. Kumpulkan semua challenges (Signature dan N-Throttling) dari SEMUA format
     for (const format of allFormats) {
         if (format.signatureCipher) {
             const searchParams = new URLSearchParams(format.signatureCipher)
@@ -217,14 +207,12 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         if (sigChallenges.length > 0) requests.push({ type: 'sig', challenges: [...new Set(sigChallenges)] })
         if (nChallenges.length > 0) requests.push({ type: 'n', challenges: [...new Set(nChallenges)] })
 
-        // Solve semua challenges sekaligus (batch)
         const input = { type: 'preprocessed', preprocessed_player: preprocessedPlayer, requests }
         const result: any = jsc(input)
 
         const sigData = result.responses?.find((r: any) => r.type === 'result' && sigChallenges.includes(Object.keys(r.data || {})[0]!))?.data || {}
         const nData = result.responses?.find((r: any) => r.type === 'result' && nChallenges.includes(Object.keys(r.data || {})[0]!))?.data || {}
 
-        // 2. Terapkan hasil solver ke masing-masing format
         for (const format of allFormats) {
             if (format.signatureCipher) {
                 const searchParams = new URLSearchParams(format.signatureCipher)
@@ -253,7 +241,6 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         }
     }
 
-    // Merge videoDetails & microformat dari initialPlayerResponse karena TVHTML5 tidak mengembalikan metadata lengkap
     json.videoDetails = { ...(initialPlayerResponse.videoDetails || {}), ...(json.videoDetails || {}) }
     json.microformat = initialPlayerResponse.microformat || json.microformat
 
