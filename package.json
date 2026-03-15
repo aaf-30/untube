@@ -16,6 +16,10 @@
     "url": "https://github.com/aaf-30/untube/issues"
   },
   "homepage": "https://github.com/aaf-30/untube#readme",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",
