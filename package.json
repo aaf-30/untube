@@ -1,0 +1,42 @@
+{
+  "name": "untube",
+  "version": "1.0.1",
+  "description": "Unduh YouTube dengan mudah ~",
+  "license": "Unlicense",
+  "author": "Achmad Al Fandi",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aaf-30/untube.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aaf-30/untube/issues"
+  },
+  "homepage": "https://github.com/aaf-30/untube#readme",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "npx tsc",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/tough-cookie": "^4.0.5",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "tough-cookie": "^6.0.1",
+    "undici": "^7.24.3"
+  }
+}

@@ -1,0 +1,369 @@
+import CookieManager from './cookie-manager.js'
+import jsc from './solver-bundle.js'
+import crypto from 'node:crypto'
+import { fetch, ProxyAgent } from 'undici'
+
+export interface YouTubeFormat {
+    asr: number | null
+    filesize: number | null
+    format_id: string
+    format_note: string
+    fps: number | null
+    audio_channels: number | null
+    height: number | null
+    width: number | null
+    quality: string | number | null
+    tbr: number | null
+    ext: string
+    vcodec: string
+    acodec: string
+    container: string | null
+    url: string
+    protocol: string
+    audio_ext: string
+    video_ext: string
+    vbr: number | null
+    abr: number | null
+    resolution: string
+    format: string
+}
+
+export interface VideoInfo {
+    id: string
+    title: string
+    description: string
+    channel: string
+    uploader: string
+    channel_id: string
+    channel_url: string | null
+    duration: number
+    view_count: number
+    average_rating: number | null
+    age_limit: number
+    webpage_url: string
+    categories: string[] | null
+    playable_in_embed: boolean
+    live_status: string
+    media_type: string
+    thumbnail: string
+    thumbnails: any[]
+    formats: YouTubeFormat[]
+    availability: string
+}
+
+export interface GetVideoInfoOptions {
+    cookieFile?: string
+    proxy?: string
+}
+
+/**
+ * Mendapatkan informasi video YouTube beserta streaming data (URL CDN)
+ * yang sudah didekripsi otomatis.
+ *
+ * @param videoId - ID video YouTube
+ * @param options - Konfigurasi opsional
+ * @returns Promise<VideoInfo>
+ */
+async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}): Promise<VideoInfo> {
+    const cookieFile = options.cookieFile || './cookies.txt'
+    const cm = new CookieManager(cookieFile)
+    cm.load()
+
+    const dispatcher = options.proxy ? new ProxyAgent(options.proxy) : undefined
+
+    const watchUrl = `https://www.youtube.com/watch?v=${videoId}`
+    const headers: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cookie': cm.getCookieString(watchUrl) || '',
+    }
+
+    // 1. Fetch halaman utama (Watch page)
+    const pageRes = await fetch(watchUrl, { headers, dispatcher } as any)
+    const pageHtml = await (pageRes as any).text()
+
+    // Update cookies
+    const setCookies = (pageRes.headers as any).getSetCookie()
+    if (setCookies && setCookies.length > 0) {
+        setCookies.forEach((cookie: any) => cm.setCookieString(cookie, watchUrl))
+        cm.save()
+    }
+
+    // 2. Ekstrak ytcfg
+    const ytcfgMatch = pageHtml.match(/ytcfg\.set\(\{([\s\S]*?)\}\);/)
+    if (!ytcfgMatch) throw new Error('ytcfg not found in webpage')
+
+    const ytcfg = JSON.parse(`{${ytcfgMatch[1]}}`)
+    const apiKey = ytcfg.INNERTUBE_API_KEY
+    const sts = ytcfg.STS
+
+    // Ekstrak ytInitialPlayerResponse untuk detail metadata yang lengkap
+    let initialPlayerResponse: any = {}
+    const initialPlayerMatch = pageHtml.match(/ytInitialPlayerResponse\s*=\s*(\{.*?\});/)
+    if (initialPlayerMatch) {
+        try {
+            initialPlayerResponse = JSON.parse(initialPlayerMatch[1]!)
+        } catch {}
+    }
+
+    // 3. Konfigurasi Client InnerTube TVHTML5
+    const apiUrl = `https://www.youtube.com/youtubei/v1/player?key=${apiKey}&prettyPrint=false`
+    const clientName = 'TVHTML5'
+    const clientVersion = '5.20260114'
+
+    const payload = {
+        context: {
+            client: {
+                clientName,
+                clientVersion,
+                userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
+                hl: 'en',
+                gl: 'US',
+            },
+        },
+        videoId,
+        playbackContext: {
+            contentPlaybackContext: {
+                html5Preference: 'HTML5_PREF_WANTS',
+                signatureTimestamp: sts,
+            },
+        },
+    }
+
+    const apiHeaders: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
+        'Content-Type': 'application/json',
+        'X-Youtube-Client-Name': '7',
+        'X-Youtube-Client-Version': clientVersion,
+        'Origin': 'https://www.youtube.com',
+        'Cookie': cm.getCookieString(apiUrl) || '',
+    }
+
+    // 4. Generate SAPISIDHASH Authorization (Jika file cookies memiliki SAPISID yang valid)
+    const sapisidCookie = cm.jar.getCookiesSync(apiUrl).find((c: any) => c.key === 'SAPISID')
+    if (sapisidCookie) {
+        const timestamp = Math.floor(Date.now() / 1000).toString()
+        const hash = crypto.createHash('sha1').update(`${timestamp} ${sapisidCookie.value} https://www.youtube.com`).digest('hex')
+        apiHeaders.Authorization = `SAPISIDHASH ${timestamp}_${hash}`
+    }
+
+    // 5. Fetch InnerTube API
+    const apiRes = await fetch(apiUrl, {
+        method: 'POST',
+        headers: apiHeaders,
+        body: JSON.stringify(payload),
+        dispatcher,
+    } as any)
+
+    const apiSetCookies = (apiRes.headers as any).getSetCookie()
+    if (apiSetCookies && apiSetCookies.length > 0) {
+        apiSetCookies.forEach((cookie: any) => cm.setCookieString(cookie, apiUrl))
+        cm.save()
+    }
+
+    if (!apiRes.ok) {
+        throw new Error(`InnerTube API failed: ${apiRes.status} ${apiRes.statusText}`)
+    }
+
+    const json: any = await apiRes.json()
+
+    // 6. Dekripsi URL pada streamingData secara iteratif (Menerapkan solver yt-dlp)
+    let preprocessedPlayerCache: any = null
+    const getPreprocessedPlayer = async () => {
+        if (preprocessedPlayerCache) return preprocessedPlayerCache
+        const playerUrl = ytcfg.PLAYER_JS_URL ? `https://www.youtube.com${ytcfg.PLAYER_JS_URL}` : 'https://www.youtube.com/s/player/74edf1a3/player_es6.vflset/en_US/base.js'
+        const res = await fetch(playerUrl, { dispatcher } as any)
+        const baseJs = await (res as any).text()
+
+        // Minta jsc untuk mem-parsing dan me-return preprocessed_player agar kita bisa cache
+        const input = { type: 'player', player: baseJs, requests: [], output_preprocessed: true }
+        const result: any = jsc(input)
+
+        preprocessedPlayerCache = result.preprocessed_player
+        return preprocessedPlayerCache
+    }
+
+    const allFormats: any[] = [
+        ...(json.streamingData?.formats || []),
+        ...(json.streamingData?.adaptiveFormats || []),
+    ]
+
+    const sigChallenges: string[] = []
+    const nChallenges: string[] = []
+
+    // 1. Kumpulkan semua challenges (Signature dan N-Throttling) dari SEMUA format
+    for (const format of allFormats) {
+        if (format.signatureCipher) {
+            const searchParams = new URLSearchParams(format.signatureCipher)
+            const s = searchParams.get('s')
+            if (s) sigChallenges.push(s)
+
+            const baseUrl = searchParams.get('url')
+            if (baseUrl) {
+                const u = new URL(baseUrl)
+                const n = u.searchParams.get('n')
+                if (n) nChallenges.push(n)
+            }
+        } else if (format.url) {
+            const u = new URL(format.url)
+            const n = u.searchParams.get('n')
+            if (n) nChallenges.push(n)
+        }
+    }
+
+    if (sigChallenges.length > 0 || nChallenges.length > 0) {
+        const preprocessedPlayer = await getPreprocessedPlayer()
+        const requests: any[] = []
+        if (sigChallenges.length > 0) requests.push({ type: 'sig', challenges: [...new Set(sigChallenges)] })
+        if (nChallenges.length > 0) requests.push({ type: 'n', challenges: [...new Set(nChallenges)] })
+
+        // Solve semua challenges sekaligus (batch)
+        const input = { type: 'preprocessed', preprocessed_player: preprocessedPlayer, requests }
+        const result: any = jsc(input)
+
+        const sigData = result.responses?.find((r: any) => r.type === 'result' && sigChallenges.includes(Object.keys(r.data || {})[0]!))?.data || {}
+        const nData = result.responses?.find((r: any) => r.type === 'result' && nChallenges.includes(Object.keys(r.data || {})[0]!))?.data || {}
+
+        // 2. Terapkan hasil solver ke masing-masing format
+        for (const format of allFormats) {
+            if (format.signatureCipher) {
+                const searchParams = new URLSearchParams(format.signatureCipher)
+                const baseUrl = searchParams.get('url')
+                const sp = searchParams.get('sp') || 'sig'
+                const s = searchParams.get('s')
+
+                if (baseUrl) {
+                    const u = new URL(baseUrl)
+                    const n = u.searchParams.get('n')
+
+                    if (s && sigData[s]) u.searchParams.set(sp, sigData[s])
+                    if (n && nData[n]) u.searchParams.set('n', nData[n])
+
+                    format.url = u.toString()
+                }
+                delete format.signatureCipher
+            } else if (format.url) {
+                const u = new URL(format.url)
+                const n = u.searchParams.get('n')
+                if (n && nData[n]) {
+                    u.searchParams.set('n', nData[n])
+                    format.url = u.toString()
+                }
+            }
+        }
+    }
+
+    // Merge videoDetails & microformat dari initialPlayerResponse karena TVHTML5 tidak mengembalikan metadata lengkap
+    json.videoDetails = { ...(initialPlayerResponse.videoDetails || {}), ...(json.videoDetails || {}) }
+    json.microformat = initialPlayerResponse.microformat || json.microformat
+
+    return normalizeYtDlp(json)
+}
+
+function normalizeYtDlp(json: any): VideoInfo {
+    const vd = json.videoDetails || {}
+    const mf = json.microformat?.playerMicroformatRenderer || {}
+    const formats: YouTubeFormat[] = []
+
+    const mapFormat = (f: any): YouTubeFormat => {
+        let vcodec = 'none'
+        let acodec = 'none'
+
+        let ext = f.mimeType ? f.mimeType.split(';')[0].split('/')[1] : 'unknown'
+        if (ext === 'x-flv') ext = 'flv'
+        if (ext === 'vnd.apple.mpegurl') ext = 'mp4'
+
+        if (f.mimeType) {
+            const match = f.mimeType.match(/codecs="(.*?)"/)
+            if (match) {
+                const codecs = match[1].split(',').map((c: string) => c.trim())
+                if (f.mimeType.startsWith('audio/')) {
+                    acodec = codecs[0]
+                } else if (f.mimeType.startsWith('video/')) {
+                    vcodec = codecs[0]
+                    if (codecs.length > 1) {
+                        acodec = codecs[1]
+                    }
+                }
+            }
+        }
+
+        let container = ext
+        if (f.mimeType?.includes('mp4')) container = 'mp4'
+        else if (f.mimeType?.includes('webm')) container = 'webm'
+        else if (f.mimeType?.includes('3gpp')) container = '3gp'
+        else if (f.mimeType?.includes('x-flv')) container = 'flv'
+
+        let resolution = 'audio only'
+        if (f.width && f.height) {
+            resolution = `${f.width}x${f.height}`
+        } else if (f.height) {
+            resolution = `${f.height}p`
+        } else if (f.width) {
+            resolution = `${f.width}w`
+        }
+
+        const format = f.qualityLabel ? `${f.itag} - ${f.qualityLabel}` : `${f.itag} - ${resolution}`
+
+        return {
+            asr: f.audioSampleRate ? Number.parseInt(f.audioSampleRate, 10) : null,
+            filesize: f.contentLength ? Number.parseInt(f.contentLength, 10) : null,
+            format_id: f.itag ? f.itag.toString() : '',
+            format_note: f.qualityLabel || f.quality || '',
+            fps: f.fps || null,
+            audio_channels: f.audioChannels || null,
+            height: f.height || null,
+            width: f.width || null,
+            quality: f.quality || f.qualityLabel || null,
+            tbr: f.bitrate ? Math.round(f.bitrate / 1000) : null,
+            ext,
+            vcodec,
+            acodec,
+            container,
+            url: f.url,
+            protocol: f.url?.startsWith('https') ? 'https' : 'http',
+            audio_ext: acodec !== 'none' ? (container === 'webm' ? 'webm' : 'm4a') : 'none',
+            video_ext: vcodec !== 'none' ? ext : 'none',
+            vbr: f.averageBitrate ? Math.round(f.averageBitrate / 1000) : null,
+            abr: f.audioSampleRate ? Math.round(Number.parseInt(f.audioSampleRate, 10) / 1000) : null,
+            resolution,
+            format,
+        }
+    }
+
+    if (json.streamingData?.formats) {
+        formats.push(...json.streamingData.formats.map(mapFormat))
+    }
+    if (json.streamingData?.adaptiveFormats) {
+        formats.push(...json.streamingData.adaptiveFormats.map(mapFormat))
+    }
+
+    const duration = Number.parseInt(vd.lengthSeconds || mf.lengthSeconds || '0', 10)
+    const view_count = Number.parseInt(vd.viewCount || mf.viewCount || '0', 10)
+    const isLive = vd.isLiveContent || false
+
+    return {
+        id: vd.videoId,
+        title: vd.title || mf.title?.simpleText,
+        description: vd.shortDescription || mf.description?.simpleText || '',
+        channel: vd.author || mf.ownerChannelName,
+        uploader: vd.author || mf.ownerChannelName,
+        channel_id: vd.channelId || mf.externalChannelId,
+        channel_url: vd.channelId || mf.externalChannelId ? `https://www.youtube.com/channel/${vd.channelId || mf.externalChannelId}` : null,
+        duration,
+        view_count,
+        average_rating: Number.parseFloat(vd.averageRating || '0') || null,
+        age_limit: (mf.isFamilySafe === false) ? 18 : (json.playabilityStatus?.status === 'AGE_VERIFICATION_REQUIRED' ? 18 : 0),
+        webpage_url: `https://www.youtube.com/watch?v=${vd.videoId}`,
+        categories: mf.category ? [mf.category] : null,
+        playable_in_embed: mf.isUnlisted === undefined ? true : !mf.isUnlisted,
+        live_status: isLive ? 'is_live' : 'not_live',
+        media_type: isLive ? 'livestream' : (mf.isShortsEligible ? 'short' : 'video'),
+        thumbnail: mf.thumbnail?.thumbnails?.[mf.thumbnail.thumbnails.length - 1]?.url || vd.thumbnail?.thumbnails?.[vd.thumbnail.thumbnails.length - 1]?.url || '',
+        thumbnails: mf.thumbnail?.thumbnails || vd.thumbnail?.thumbnails || [],
+        formats,
+        availability: json.playabilityStatus?.status || 'OK',
+    }
+}
+
+export { getVideoInfo }
