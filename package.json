@@ -1,20 +1,16 @@
 {
   "name": "untube",
-  "version": "1.0.9",
+  "version": "2.0.0",
   "description": "Lightweight YouTube video metadata and streaming URL extractor for Node.js. Features automatic signature decryption (n-parameter), proxy support, and cookie management. Ported from yt-dlp.",
   "keywords": [
     "youtube",
     "yt-dlp",
     "youtube-dl",
-    "video-info",
     "metadata",
     "scraper",
     "downloader",
     "innertube",
-    "signature-decryption",
-    "undici",
-    "youtube-api",
-    "streaming-url"
+    "youtube-api"
   ],
   "license": "Unlicense",
   "author": "Achmad Al Fandi",

@@ -1,4 +1,4 @@
-import CookieManager from './cookie-manager.js'
+import CookieManager, { RawCookie } from './cookie-manager.js'
 import jsc from './solver-bundle.js'
 import crypto from 'node:crypto'
 import { fetch, ProxyAgent } from 'undici'
@@ -52,7 +52,7 @@ export interface VideoInfo {
 }
 
 export interface GetVideoInfoOptions {
-    cookieFile?: string
+    cookie?: string | RawCookie
     proxy?: string
 }
 
@@ -65,9 +65,9 @@ export interface GetVideoInfoOptions {
  * @returns Promise<VideoInfo>
  */
 async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}): Promise<VideoInfo> {
-    const cookieFile = options.cookieFile || './cookies.txt'
-    const cm = new CookieManager(cookieFile)
-    cm.load()
+    const cookieSource = options.cookie || './cookies.txt'
+    const cm = new CookieManager(cookieSource)
+    await cm.load()
 
     const dispatcher = options.proxy ? new ProxyAgent(options.proxy) : undefined
 
@@ -84,7 +84,7 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     const setCookies = (pageRes.headers as any).getSetCookie()
     if (setCookies && setCookies.length > 0) {
         setCookies.forEach((cookie: any) => cm.setCookieString(cookie, watchUrl))
-        cm.save()
+        await cm.save()
     }
 
     const ytcfgMatch = pageHtml.match(/ytcfg\.set\(\{([\s\S]*?)\}\);/)
@@ -151,7 +151,7 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     const apiSetCookies = (apiRes.headers as any).getSetCookie()
     if (apiSetCookies && apiSetCookies.length > 0) {
         apiSetCookies.forEach((cookie: any) => cm.setCookieString(cookie, apiUrl))
-        cm.save()
+        await cm.save()
     }
 
     if (!apiRes.ok) {
@@ -353,4 +353,4 @@ function normalizeYtDlp(json: any): VideoInfo {
     }
 }
 
-export { getVideoInfo }
+export { getVideoInfo, RawCookie }

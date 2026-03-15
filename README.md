@@ -8,9 +8,8 @@ A lightweight YouTube metadata and streaming URL scraper for Node.js, featuring 
 ## Features
 
 - ✅ Fetch complete video metadata.
-- ✅ Automatic streaming URL decryption (Signature Cipher & NSFW bypass).
 - ✅ HTTP/HTTPS Proxy support via `undici`.
-- ✅ Automatic Cookie management.
+- ✅ Automatic Cookie management (File or Remote DB).
 - ✅ Full TypeScript support.
 
 ## Installation
@@ -27,8 +26,8 @@ import { getVideoInfo } from 'untube';
 async function main() {
     try {
         const info = await getVideoInfo('videoId', {
-            // Optional: Path to cookies file (Netscape format)
-            cookieFile: './cookies.txt',
+            // Optional: Path to cookies file (Netscape format) or RawCookie object
+            cookie: './cookies.txt',
             // Optional: Use proxy to avoid rate limits or blocks
             proxy: 'http://user:pass@my-proxy.com:8080'
         });
@@ -52,14 +51,38 @@ main();
 
 Using cookies is highly recommended to avoid rate limits, access age-restricted (NSFW) videos, or videos only available in specific regions.
 
-### How to Get Cookies:
+### 1. Using a File (Netscape format)
 1. Install a browser extension like **"Get cookies.txt LOCALLY"** (available on Chrome Web Store or Firefox Add-ons).
 2. Open YouTube and ensure you are logged in (optional, but recommended).
 3. Click on the extension and select **"Export as Netscape format"**.
 4. Save the file as `cookies.txt` in your project directory.
-5. Provide the file path in the `cookieFile` option when calling `getVideoInfo`.
+5. Provide the file path in the `cookie` option.
 
-> **⚠️ Security:** Never share your `cookies.txt` file with anyone as it contains your login session. Ensure `cookies.txt` is added to your `.gitignore`.
+### 2. Advanced: Remote Storage (Firebase, Database, etc.)
+If you want to store cookies in a remote database or as a string, use the `RawCookie` class:
+
+```typescript
+import { getVideoInfo, RawCookie } from 'untube';
+
+const myRawCookie = new RawCookie(
+    async () => {
+        // Implement your own read logic (e.g., from Firebase Realtime DB)
+        const cookies = await fetchCookiesFromDB();
+        return cookies; // Must return Netscape format string
+    },
+    async (newCookies) => {
+        // Implement your own write logic
+        // This is called whenever YouTube sends new cookies
+        await saveCookiesToDB(newCookies);
+    }
+);
+
+const info = await getVideoInfo('videoId', {
+    cookie: myRawCookie
+});
+```
+
+> **⚠️ Security:** Never share your cookies with anyone as they contain your login session. Ensure local cookie files are added to your `.gitignore`.
 
 ## Disclaimer
 
