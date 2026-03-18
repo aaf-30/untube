@@ -1,6 +1,6 @@
 {
   "name": "untube",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Lightweight YouTube video metadata and streaming URL extractor for Node.js. Features automatic signature decryption (n-parameter), proxy support, and cookie management. Ported from yt-dlp.",
   "keywords": [
     "youtube",
