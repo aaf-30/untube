@@ -82,12 +82,12 @@ untube('videoId', { format: 'highestaudio' });
 ```
 
 ### `mode` (Streaming Behavior)
-By default, `untube` uses **parallel** downloading to bypass YouTube bandwidth throttling. 
+By default, `untube` uses **parallel** downloading to maximize speed. 
 
 | Mode | Characteristics | Best for |
 | :--- | :--- | :--- |
-| `'parallel'` (Default) | Incredibly fast. Downloads chunks concurrently into a temp file and streams the result. Emits `progress` events. | Downloading files, massive scrapers. |
-| `'sequential'` | Pure RAM streaming. Slower (throttled by YouTube). No temp files used. Start-up time is instant. | Real-time audio playback. |
+| `'parallel'` (Default) | Incredibly fast. Downloads chunks concurrently into a temp file and streams the result. Emits `progress` events. | Downloading large files, maximum throughput. |
+| `'sequential'` | Pure RAM streaming. Instant start-up. No temp files used. | Real-time audio playback, Discord bots. |
 
 ```typescript
 // Use sequential mode for instant start-up time
