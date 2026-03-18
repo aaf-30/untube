@@ -2,6 +2,11 @@ import CookieManager, { RawCookie } from './cookie-manager.js'
 import jsc from './solver-bundle.js'
 import crypto from 'node:crypto'
 import { fetch, ProxyAgent } from 'undici'
+import { filterFormats, sortFormats, chooseFormat, FilterFunction, FilterString, ChooseFormatQuality, ChooseFormatOptions } from './utils.js'
+import { PassThrough, Readable } from 'node:stream'
+import { createReadStream } from 'node:fs'
+import fs from 'node:fs/promises'
+import { downloadVideoParallel } from './downloader.js'
 
 export interface YouTubeFormat {
     asr: number | null
@@ -28,6 +33,13 @@ export interface YouTubeFormat {
     format: string
 }
 
+export interface YouTubeCaption {
+    url: string
+    ext: string
+    name: string
+    language: string
+}
+
 export interface VideoInfo {
     id: string
     title: string
@@ -48,6 +60,7 @@ export interface VideoInfo {
     thumbnail: string
     thumbnails: any[]
     formats: YouTubeFormat[]
+    captions: YouTubeCaption[]
     availability: string
 }
 
@@ -159,6 +172,10 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     }
 
     const json: any = await apiRes.json()
+
+    if (json.playabilityStatus && json.playabilityStatus.status !== 'OK') {
+        throw new Error(`YouTube Error: ${json.playabilityStatus.reason || json.playabilityStatus.status}`)
+    }
 
     let preprocessedPlayerCache: any = null
     const getPreprocessedPlayer = async () => {
@@ -329,6 +346,18 @@ function normalizeYtDlp(json: any): VideoInfo {
     const view_count = Number.parseInt(vd.viewCount || mf.viewCount || '0', 10)
     const isLive = vd.isLiveContent || false
 
+    const captions: YouTubeCaption[] = []
+    if (json.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
+        for (const track of json.captions.playerCaptionsTracklistRenderer.captionTracks) {
+            captions.push({
+                url: track.baseUrl,
+                ext: 'vtt', // Default format for YouTube captions
+                name: track.name?.simpleText || track.languageCode,
+                language: track.languageCode,
+            })
+        }
+    }
+
     return {
         id: vd.videoId,
         title: vd.title || mf.title?.simpleText,
@@ -349,8 +378,97 @@ function normalizeYtDlp(json: any): VideoInfo {
         thumbnail: mf.thumbnail?.thumbnails?.[mf.thumbnail.thumbnails.length - 1]?.url || vd.thumbnail?.thumbnails?.[vd.thumbnail.thumbnails.length - 1]?.url || '',
         thumbnails: mf.thumbnail?.thumbnails || vd.thumbnail?.thumbnails || [],
         formats,
+        captions,
         availability: json.playabilityStatus?.status || 'OK',
     }
 }
 
-export { getVideoInfo, RawCookie }
+export interface UntubeOptions extends GetVideoInfoOptions {
+    /**
+     * Quality selection. Can be one of:
+     * 'highest', 'lowest', 'highestaudio', 'lowestaudio', 'highestvideo', 'lowestvideo'.
+     * Or a specific format ID / itag (e.g., '137', '18', '299').
+     */
+    format?: ChooseFormatQuality;
+    filter?: FilterString | FilterFunction;
+    mode?: 'parallel' | 'sequential';
+    signal?: AbortSignal;
+}
+
+/**
+ * Downloads a YouTube video and returns a readable stream.
+ * Emits 'info' with VideoInfo and the selected format.
+ * Emits 'progress' with download percentage (only available in 'parallel' mode).
+ * 
+ * @param id - YouTube video ID
+ * @param options - Options for fetching info and selecting format
+ * @returns A PassThrough stream containing the downloaded video/audio data
+ */
+function untube(id: string, options: UntubeOptions = {}): PassThrough {
+    const stream = new PassThrough();
+
+    (async () => {
+        try {
+            const info = await getVideoInfo(id, options);
+            const format = chooseFormat(info.formats, { 
+                quality: options.format, 
+                filter: options.filter 
+            });
+
+            stream.emit('info', info, format);
+
+            if (options.mode === 'sequential' || format.url.includes('.m3u8')) {
+                const dispatcher = options.proxy ? new ProxyAgent(options.proxy) : undefined;
+                const fetchOptions: any = { dispatcher, signal: options.signal };
+                
+                // Add Range header to bypass YouTube's bandwidth throttling for non-HLS streams
+                if (!format.url.includes('.m3u8')) {
+                    fetchOptions.headers = { Range: 'bytes=0-' };
+                }
+
+                const response = await fetch(format.url, fetchOptions);
+                if (!response.ok || !response.body) {
+                    throw new Error(`Failed to fetch video stream: ${response.status}`);
+                }
+                const webStream = Readable.fromWeb(response.body as any);
+                webStream.on('error', (err) => stream.emit('error', err));
+                webStream.pipe(stream);
+            } else {
+                const tempFile = await downloadVideoParallel(format.url, options.proxy, options.signal, (percent) => {
+                    stream.emit('progress', percent);
+                });
+
+                if (!tempFile) {
+                    throw new Error('Download failed, no file returned.');
+                }
+
+                const readStream = createReadStream(tempFile);
+                
+                readStream.on('error', (err) => {
+                    stream.emit('error', err);
+                    fs.unlink(tempFile).catch(() => {});
+                });
+
+                readStream.on('end', () => {
+                    fs.unlink(tempFile).catch(() => {});
+                });
+                
+                readStream.pipe(stream);
+            }
+
+        } catch (err) {
+            stream.emit('error', err);
+        }
+    })();
+
+    return stream;
+}
+
+untube.getVideoInfo = getVideoInfo;
+untube.RawCookie = RawCookie;
+untube.filterFormats = filterFormats;
+untube.sortFormats = sortFormats;
+untube.chooseFormat = chooseFormat;
+
+export { getVideoInfo, RawCookie, filterFormats, sortFormats, chooseFormat, FilterFunction, FilterString, ChooseFormatQuality, ChooseFormatOptions }
+export default untube;
