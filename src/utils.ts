@@ -122,8 +122,8 @@ export function chooseFormat(formats: YouTubeFormat[], options: ChooseFormatOpti
             const exactMatch = filtered.find(
                 (f) =>
                     f.format_id === quality ||
-                    f.resolution === quality ||
-                    (typeof quality === 'string' && f.resolution.includes(quality))
+                    f.format_note === quality ||
+                    (typeof quality === 'string' && f.format_note.includes(quality))
             );
             if (!exactMatch) {
                 throw new Error(`No format found matching quality: ${quality}`);
