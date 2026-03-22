@@ -1,7 +1,7 @@
 {
   "name": "untube",
-  "version": "2.3.0",
-  "description": "Lightweight YouTube video metadata and streaming URL extractor for Node.js. Features automatic signature decryption (n-parameter), proxy support, and cookie management. Ported from yt-dlp.",
+  "version": "2.4.0",
+  "description": "Lightweight YouTube video metadata & streaming URL extractor for Node.js. High reliability ported from yt-dlp",
   "keywords": [
     "youtube",
     "yt-dlp",
@@ -26,6 +26,9 @@
     "url": "https://github.com/aaf-30/untube/issues"
   },
   "homepage": "https://github.com/aaf-30/untube#readme",
+  "engines": {
+    "node": ">=18.18.0"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -37,15 +40,18 @@
   ],
   "scripts": {
     "build": "npx tsc",
-    "update-solver": "node scripts/update-solver.js",
+    "update-solver": "tsx scripts/update-solver.ts",
     "prepare": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@types/tough-cookie": "^4.0.5",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "astring": "^1.9.0",
+    "meriyah": "^7.1.0",
     "p-limit": "^7.3.0",
     "tough-cookie": "^6.0.1",
     "undici": "^7.24.3"

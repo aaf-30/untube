@@ -1,6 +1,10 @@
 # untube
 
 [![npm version](https://img.shields.io/npm/v/untube.svg)](https://www.npmjs.com/package/untube)
+[![npm downloads](https://img.shields.io/npm/dm/untube.svg)](https://www.npmjs.com/package/untube)
+[![node version](https://img.shields.io/node/v/untube.svg)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg)](https://www.typescriptlang.org/)
+[![Socket Badge](https://socket.dev/api/badge/npm/package/untube)](https://socket.dev/npm/package/untube)
 [![License](https://img.shields.io/npm/l/untube.svg)](LICENSE)
 
 A lightweight, extremely fast YouTube video downloader and metadata scraper for Node.js. Ported from the core extraction logic of [yt-dlp](https://github.com/yt-dlp/yt-dlp).
@@ -133,7 +137,7 @@ const sorted = untube.sortFormats(info.formats);
 
 ## YouTube Music Search
 
-You can search for songs, albums, and videos directly from YouTube Music using `untube.ytmusic()`:
+You can search for songs directly from YouTube Music using `untube.ytmusic()`:
 
 ```typescript
 import untube from 'untube';
