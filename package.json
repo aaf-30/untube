@@ -1,6 +1,6 @@
 {
   "name": "untube",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "Lightweight YouTube video metadata & streaming URL extractor for Node.js. High reliability ported from yt-dlp",
   "keywords": [
     "youtube",
@@ -40,13 +40,12 @@
   ],
   "scripts": {
     "build": "npx tsc",
-    "update-solver": "tsx scripts/update-solver.ts",
+    "update-solver": "node scripts/update-solver.js",
     "prepare": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@types/tough-cookie": "^4.0.5",
-    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {

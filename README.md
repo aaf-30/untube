@@ -11,8 +11,24 @@ A lightweight, extremely fast YouTube video downloader and metadata scraper for 
 
 ## Installation
 
+**npm**
 ```bash
 npm install untube
+```
+
+**pnpm**
+```bash
+pnpm add untube
+```
+
+**yarn**
+```bash
+yarn add untube
+```
+
+**bun**
+```bash
+bun add untube
 ```
 
 ## Quick Start (Downloading Videos)
