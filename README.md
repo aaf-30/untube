@@ -131,6 +131,27 @@ const sorted = untube.sortFormats(info.formats);
 
 ---
 
+## YouTube Music Search
+
+You can search for songs, albums, and videos directly from YouTube Music using `untube.ymusic()`:
+
+```typescript
+import untube from 'untube';
+
+// Search YouTube Music
+const results = await untube.ymusic('Never gonna give you up');
+
+console.log(`Found ${results.length} results.`);
+if (results.length > 0) {
+    console.log('Top Result:', results[0].title);
+    console.log('Artist:', results[0].artist);
+    console.log('Video ID:', results[0].videoId);
+    console.log('Type:', results[0].type); // e.g., 'Song', 'Video'
+}
+```
+
+---
+
 ## Cookie Handling
 
 Using cookies is highly recommended to avoid rate limits, access age-restricted (NSFW) videos, or videos only available in specific regions.

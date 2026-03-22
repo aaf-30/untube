@@ -7,6 +7,7 @@ import { PassThrough, Readable } from 'node:stream'
 import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import { downloadVideoParallel } from './downloader.js'
+import { ymusic, YTMusicSearchResult, SearchYTMusicOptions } from './ymusic.js'
 
 export interface YouTubeFormat {
     asr: number | null
@@ -469,6 +470,7 @@ untube.RawCookie = RawCookie;
 untube.filterFormats = filterFormats;
 untube.sortFormats = sortFormats;
 untube.chooseFormat = chooseFormat;
+untube.ymusic = ymusic;
 
-export { getVideoInfo, RawCookie, filterFormats, sortFormats, chooseFormat, FilterFunction, FilterString, ChooseFormatQuality, ChooseFormatOptions }
+export { getVideoInfo, RawCookie, filterFormats, sortFormats, chooseFormat, FilterFunction, FilterString, ChooseFormatQuality, ChooseFormatOptions, ymusic, YTMusicSearchResult, SearchYTMusicOptions }    
 export default untube;
