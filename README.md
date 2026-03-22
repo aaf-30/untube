@@ -133,13 +133,13 @@ const sorted = untube.sortFormats(info.formats);
 
 ## YouTube Music Search
 
-You can search for songs, albums, and videos directly from YouTube Music using `untube.ymusic()`:
+You can search for songs, albums, and videos directly from YouTube Music using `untube.ytmusic()`:
 
 ```typescript
 import untube from 'untube';
 
 // Search YouTube Music
-const results = await untube.ymusic('Never gonna give you up');
+const results = await untube.ytmusic('Never gonna give you up');
 
 console.log(`Found ${results.length} results.`);
 if (results.length > 0) {
