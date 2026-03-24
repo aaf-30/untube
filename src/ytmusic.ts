@@ -27,8 +27,7 @@ function timeToSeconds(timeStr: string): number {
 }
 
 export async function ytmusic(query: string, options: SearchYTMusicOptions = {}): Promise<YTMusicSearchResult[]> {
-  const cookieSource = options.cookie || './cookies.txt';
-  const cm = new CookieManager(cookieSource);
+  const cm = new CookieManager(options.cookie);
   await cm.load();
 
   const dispatcher = options.proxy ? new ProxyAgent(options.proxy) : undefined;

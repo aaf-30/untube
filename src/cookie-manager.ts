@@ -9,15 +9,17 @@ export class RawCookie {
 }
 
 class CookieManager {
-    private source: string | RawCookie;
+    private source: string | RawCookie | undefined;
     public jar: CookieJar;
 
-    constructor(source: string | RawCookie) {
+    constructor(source?: string | RawCookie) {
         this.source = source;
         this.jar = new CookieJar(undefined, { looseMode: true });
     }
 
     async load(): Promise<void> {
+        if (!this.source) return;
+
         let content = '';
         if (this.source instanceof RawCookie) {
             content = await this.source.onRead();
@@ -99,6 +101,8 @@ class CookieManager {
             
             out += `${prefix}${domain}\t${includeSubdomains}\t${path}\t${secure}\t${expires}\t${name}\t${value}\n`;
         }
+
+        if (!this.source) return;
 
         if (this.source instanceof RawCookie) {
             await this.source.onWrite(out);

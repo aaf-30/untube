@@ -79,17 +79,20 @@ export interface GetVideoInfoOptions {
  * @returns Promise<VideoInfo>
  */
 async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}): Promise<VideoInfo> {
-    const cookieSource = options.cookie || './cookies.txt'
-    const cm = new CookieManager(cookieSource)
+    const cm = new CookieManager(options.cookie)
     await cm.load()
 
     const dispatcher = options.proxy ? new ProxyAgent(options.proxy) : undefined
 
     const watchUrl = `https://www.youtube.com/watch?v=${videoId}`
+    const cookieString = cm.getCookieString(watchUrl)
+
     const headers: Record<string, string> = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Cookie': cm.getCookieString(watchUrl) || '',
+    }
+    if (cookieString) {
+        headers['Cookie'] = cookieString
     }
 
     const pageRes = await fetch(watchUrl, { headers, dispatcher } as any)
@@ -102,7 +105,12 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     }
 
     const ytcfgMatch = pageHtml.match(/ytcfg\.set\(\{([\s\S]*?)\}\);/)
-    if (!ytcfgMatch) throw new Error('ytcfg not found in webpage')
+    if (!ytcfgMatch) {
+        if (pageHtml.includes('g-recaptcha') || pageHtml.includes('unusual traffic')) {
+            throw new Error('YouTube blocked the request (CAPTCHA detected). Please provide cookies to bypass this.')
+        }
+        throw new Error('ytcfg not found in webpage')
+    }
 
     const ytcfg = JSON.parse(`{${ytcfgMatch[1]}}`)
     const apiKey = ytcfg.INNERTUBE_API_KEY
@@ -139,13 +147,17 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         },
     }
 
+    const apiCookieString = cm.getCookieString(apiUrl)
+
     const apiHeaders: Record<string, string> = {
         'User-Agent': 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
         'Content-Type': 'application/json',
         'X-Youtube-Client-Name': '7',
         'X-Youtube-Client-Version': clientVersion,
         'Origin': 'https://www.youtube.com',
-        'Cookie': cm.getCookieString(apiUrl) || '',
+    }
+    if (apiCookieString) {
+        apiHeaders['Cookie'] = apiCookieString
     }
 
     const sapisidCookie = cm.jar.getCookiesSync(apiUrl).find((c: any) => c.key === 'SAPISID')
