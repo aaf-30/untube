@@ -66,7 +66,7 @@ export interface VideoInfo {
 }
 
 export interface GetVideoInfoOptions {
-    cookie?: string | RawCookie
+    cookies?: string | RawCookie
     proxy?: string
 }
 
@@ -79,7 +79,7 @@ export interface GetVideoInfoOptions {
  * @returns Promise<VideoInfo>
  */
 async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}): Promise<VideoInfo> {
-    const cm = new CookieManager(options.cookie)
+    const cm = new CookieManager(options.cookies)
     await cm.load()
 
     const dispatcher = options.proxy ? new ProxyAgent(options.proxy) : undefined

@@ -49,7 +49,7 @@ const controller = new AbortController();
 const stream = untube('dQw4w9WgXcQ', {
     format: 'highestvideo', // Select highest video quality (will likely be video-only)
     signal: controller.signal, // Pass the abort signal
-    // cookie: './cookies.txt', // Optional: avoid age-restrictions
+    // cookies: './cookies.txt', // Optional: avoid age-restrictions
 });
 
 // Optional: Listen to events
@@ -183,7 +183,7 @@ Using cookies is highly recommended to avoid rate limits, access age-restricted 
 4. Provide the file path:
 
 ```typescript
-untube('videoId', { cookie: './cookies.txt' });
+untube('videoId', { cookies: './cookies.txt' });
 ```
 
 ### 2. Advanced: Remote Storage (Database / Firebase)
@@ -203,7 +203,7 @@ const myRawCookie = new untube.RawCookie(
     }
 );
 
-untube('videoId', { cookie: myRawCookie });
+untube('videoId', { cookies: myRawCookie });
 ```
 
 > **⚠️ Security:** Never share your cookies with anyone as they contain your login session. Ensure local cookie files are added to your `.gitignore`.
@@ -216,4 +216,6 @@ This project is created for educational and research purposes only. Users are so
 
 ## License
 
-[Unlicense](LICENSE)
+This project is licensed under the [Unlicense](LICENSE) (Public Domain).
+
+**Note:** While the core codebase is released under the Unlicense, this project relies on open-source dependencies (e.g., `tough-cookie`, `meriyah`, `astring`, etc.) which have their own respective licenses (such as MIT, BSD, etc.). Please ensure compliance with the licenses of these dependencies if you intend to distribute or use this module in a commercial product.

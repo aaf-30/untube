@@ -12,7 +12,7 @@ export interface YTMusicSearchResult {
 }
 
 export interface SearchYTMusicOptions {
-  cookie?: string | RawCookie;
+  cookies?: string | RawCookie;
   proxy?: string;
 }
 
@@ -27,7 +27,7 @@ function timeToSeconds(timeStr: string): number {
 }
 
 export async function ytmusic(query: string, options: SearchYTMusicOptions = {}): Promise<YTMusicSearchResult[]> {
-  const cm = new CookieManager(options.cookie);
+  const cm = new CookieManager(options.cookies);
   await cm.load();
 
   const dispatcher = options.proxy ? new ProxyAgent(options.proxy) : undefined;
