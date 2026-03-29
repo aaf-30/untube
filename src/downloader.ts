@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
+import { createWriteStream, unlinkSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -22,6 +22,18 @@ export async function downloadVideoParallel(url: string, proxy?: string, signal?
   const tempFileName = `download_${randomUUID()}.mp4`
   const filePath = path.join(os.tmpdir(), tempFileName)
   const dispatcher = proxy ? new ProxyAgent(proxy) : undefined
+
+  const cleanupTempFile = () => {
+    try {
+      unlinkSync(filePath)
+    } catch (e) {
+      // Ignore errors if file doesn't exist
+    }
+  }
+
+  process.on('SIGINT', cleanupTempFile)
+  process.on('SIGTERM', cleanupTempFile)
+  process.on('exit', cleanupTempFile)
 
   try {
     let progress = 0
@@ -119,5 +131,9 @@ export async function downloadVideoParallel(url: string, proxy?: string, signal?
     const errStr = err instanceof Error ? err.stack || err.message : String(err)
     console.error(`[Downloader] Critical Error:\n${errStr}`)
     throw err
+  } finally {
+    process.off('SIGINT', cleanupTempFile)
+    process.off('SIGTERM', cleanupTempFile)
+    process.off('exit', cleanupTempFile)
   }
 }

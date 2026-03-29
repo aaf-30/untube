@@ -9,6 +9,8 @@ import fs from 'node:fs/promises'
 import { downloadVideoParallel } from './downloader.js'
 import { ytmusic, YTMusicSearchResult, SearchYTMusicOptions } from './ytmusic.js'
 
+const globalPreprocessedPlayerCache = new Map<string, any>()
+
 export interface YouTubeFormat {
     asr: number | null
     filesize: number | null
@@ -32,6 +34,8 @@ export interface YouTubeFormat {
     abr: number | null
     resolution: string
     format: string
+    language?: string | null
+    language_preference?: number | null
 }
 
 export interface YouTubeCaption {
@@ -190,18 +194,18 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         throw new Error(`YouTube Error: ${json.playabilityStatus.reason || json.playabilityStatus.status}`)
     }
 
-    let preprocessedPlayerCache: any = null
     const getPreprocessedPlayer = async () => {
-        if (preprocessedPlayerCache) return preprocessedPlayerCache
         const playerUrl = ytcfg.PLAYER_JS_URL ? `https://www.youtube.com${ytcfg.PLAYER_JS_URL}` : 'https://www.youtube.com/s/player/74edf1a3/player_es6.vflset/en_US/base.js'
+        if (globalPreprocessedPlayerCache.has(playerUrl)) return globalPreprocessedPlayerCache.get(playerUrl)
+
         const res = await fetch(playerUrl, { dispatcher } as any)
         const baseJs = await (res as any).text()
 
         const input = { type: 'player', player: baseJs, requests: [], output_preprocessed: true }
         const result: any = jsc(input)
 
-        preprocessedPlayerCache = result.preprocessed_player
-        return preprocessedPlayerCache
+        globalPreprocessedPlayerCache.set(playerUrl, result.preprocessed_player)
+        return result.preprocessed_player
     }
 
     const allFormats: any[] = [
@@ -321,12 +325,29 @@ function normalizeYtDlp(json: any): VideoInfo {
         }
 
         const format = f.qualityLabel ? `${f.itag} - ${f.qualityLabel}` : `${f.itag} - ${resolution}`
+        
+        let language: string | null = null
+        let language_preference: number | null = null
+        let format_note = f.qualityLabel || f.quality || ''
+
+        if (f.audioTrack) {
+            language = f.audioTrack.id?.split('.')[0] || null
+            language_preference = -1
+
+            if (f.audioTrack.displayName?.toLowerCase().includes('original')) {
+                language_preference = 1
+                format_note = '(original)'
+            } else if (f.audioTrack.audioIsDefault) {
+                language_preference = 0
+                format_note = '(default)'
+            }
+        }
 
         return {
             asr: f.audioSampleRate ? Number.parseInt(f.audioSampleRate, 10) : null,
             filesize: f.contentLength ? Number.parseInt(f.contentLength, 10) : null,
             format_id: f.itag ? f.itag.toString() : '',
-            format_note: f.qualityLabel || f.quality || '',
+            format_note: format_note,
             fps: f.fps || null,
             audio_channels: f.audioChannels || null,
             height: f.height || null,
@@ -345,6 +366,8 @@ function normalizeYtDlp(json: any): VideoInfo {
             abr: f.audioSampleRate ? Math.round(Number.parseInt(f.audioSampleRate, 10) / 1000) : null,
             resolution,
             format,
+            language,
+            language_preference
         }
     }
 
@@ -433,8 +456,7 @@ function untube(id: string, options: UntubeOptions = {}): PassThrough {
             if (options.mode === 'sequential' || format.url.includes('.m3u8')) {
                 const dispatcher = options.proxy ? new ProxyAgent(options.proxy) : undefined;
                 const fetchOptions: any = { dispatcher, signal: options.signal };
-                
-                // Add Range header to bypass YouTube's bandwidth throttling for non-HLS streams
+
                 if (!format.url.includes('.m3u8')) {
                     fetchOptions.headers = { Range: 'bytes=0-' };
                 }
