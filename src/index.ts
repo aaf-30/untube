@@ -202,7 +202,12 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         const baseJs = await (res as any).text()
 
         const input = { type: 'player', player: baseJs, requests: [], output_preprocessed: true }
-        const result: any = jsc(input)
+        let result: any
+        try {
+            result = jsc(input)
+        } catch (err: any) {
+            throw new Error(`Failed to preprocess YouTube player. ${err.message}`)
+        }
 
         globalPreprocessedPlayerCache.set(playerUrl, result.preprocessed_player)
         return result.preprocessed_player
@@ -242,7 +247,12 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         if (nChallenges.length > 0) requests.push({ type: 'n', challenges: [...new Set(nChallenges)] })
 
         const input = { type: 'preprocessed', preprocessed_player: preprocessedPlayer, requests }
-        const result: any = jsc(input)
+        let result: any
+        try {
+            result = jsc(input)
+        } catch (err: any) {
+            throw new Error(`Failed to decrypt YouTube signature. ${err.message}`)
+        }
 
         const sigData = result.responses?.find((r: any) => r.type === 'result' && sigChallenges.includes(Object.keys(r.data || {})[0]!))?.data || {}
         const nData = result.responses?.find((r: any) => r.type === 'result' && nChallenges.includes(Object.keys(r.data || {})[0]!))?.data || {}
