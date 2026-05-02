@@ -9,6 +9,22 @@
 
 A lightweight, extremely fast YouTube video downloader and metadata scraper for Node.js. Ported from the core extraction logic of [yt-dlp](https://github.com/yt-dlp/yt-dlp).
 
+---
+
+## Table of Contents
+- [Installation](#installation)
+- [Fetching Metadata (Basic Usage)](#fetching-metadata-basic-usage)
+- [Downloading Videos (Streaming)](#downloading-videos-streaming)
+- [Configuration Options](#configuration-options)
+- [Format Selection & Merging](#format-selection--merging)
+- [Format Utilities](#format-utilities)
+- [YouTube Music Search](#youtube-music-search)
+- [Cookie Handling](#cookie-handling)
+- [API Reference](#api-reference)
+- [Disclaimer & License](#disclaimer--license)
+
+---
+
 ## Installation
 
 **npm**
@@ -31,12 +47,34 @@ yarn add untube
 bun add untube
 ```
 
-## Quick Start (Downloading Videos)
+---
+
+## Fetching Metadata (Basic Usage)
+
+If you only need video details without downloading the stream, use `untube.getVideoInfo()`. This is the fastest way to get metadata.
+
+```typescript
+import untube from 'untube';
+
+// Basic usage
+const info = await untube.getVideoInfo('dQw4w9WgXcQ');
+
+console.log('Title:', info.title);
+console.log('Views:', info.view_count);
+console.log('Duration:', info.duration, 'seconds');
+
+// With options (e.g., proxy or cookies)
+const infoWithProxy = await untube.getVideoInfo('dQw4w9WgXcQ', {
+    proxy: 'http://user:pass@host:port',
+    cookies: './cookies.txt'
+});
+```
+
+---
+
+## Downloading Videos (Streaming)
 
 `untube` provides a readable stream that you can pipe anywhere (e.g., to a file, to `fluent-ffmpeg`, or an HTTP response).
-
-> **⚠️ Important Note on Video & Audio:**  
-> YouTube separates high-quality video (1080p, 4K) and audio into different streams (DASH formats). If you choose a high-quality video format (like `highestvideo`), the resulting file will **not have sound**. If you want a single file with both high-quality video and audio, you must download the video and audio streams separately and merge them yourself using a tool like `ffmpeg`.
 
 ```typescript
 import fs from 'node:fs';
@@ -47,26 +85,19 @@ const controller = new AbortController();
 
 // Start downloading a video
 const stream = untube('dQw4w9WgXcQ', {
-    format: 'highestvideo', // Select highest video quality (will likely be video-only)
-    signal: controller.signal, // Pass the abort signal
-    // cookies: './cookies.txt', // Optional: avoid age-restrictions
+    format: 'highestvideo', // Select quality
+    signal: controller.signal, // Optional: pass the abort signal
 });
 
-// Optional: Listen to events
+// Listen to events
 stream.on('info', (info, format) => {
     console.log(`Downloading: ${info.title}`);
-    console.log(`Format: ${format.resolution} (${format.container})`);
-    
-    // You can also access subtitles/captions
-    if (info.captions.length > 0) {
-        console.log(`Available Subtitles: ${info.captions.map(c => c.language).join(', ')}`);
-    }
+    console.log(`Selected Format: ${format.resolution} (${format.container})`);
 });
 
 stream.on('progress', (progress) => {
-    const downloadedMb = (progress.downloadedBytes / 1024 / 1024).toFixed(2);
-    const totalMb = (progress.totalBytes / 1024 / 1024).toFixed(2);
-    console.log(`Progress: ${progress.percent}% (${downloadedMb}MB / ${totalMb}MB)`);
+    // Progress event is only available in 'parallel' mode (default)
+    console.log(`Progress: ${progress.percent}% (${progress.downloadedBytes} bytes)`);
 });
 
 stream.on('error', (err) => {
@@ -75,75 +106,61 @@ stream.on('error', (err) => {
 
 // Pipe the stream directly to a file
 stream.pipe(fs.createWriteStream('video.mp4'));
-
-// Example: Cancel download after 5 seconds
-// setTimeout(() => controller.abort(), 5000);
 ```
 
 ---
 
 ## Configuration Options
 
-When calling `untube(id, options)` or `untube.getVideoInfo(id, options)`, you can pass an options object.
+### `untube(id, options)`
+| Option | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `format` | `string` | `'highest'` | Quality preset (e.g., `'highestaudio'`, `'1080p'`) or specific `itag`. |
+| `filter` | `string \| function` | `undefined` | Filter formats (e.g., `'audioonly'`, `'videoonly'`). |
+| `mode` | `'parallel' \| 'sequential'` | `'parallel'` | Download strategy. `'parallel'` is faster; `'sequential'` is better for live playback. |
+| `proxy` | `string` | `undefined` | Proxy URL (HTTP/HTTPS). |
+| `cookies` | `string \| RawCookie` | `undefined` | Path to Netscape cookie file or `RawCookie` instance. |
+| `signal` | `AbortSignal` | `undefined` | Signal to abort the download. |
 
-### `format` (Quality Selection)
-You can easily pick the desired quality using preset strings or specific format IDs (`itag`):
-
-- **Presets:** `'highest'` (default), `'lowest'`, `'highestaudio'`, `'lowestaudio'`, `'highestvideo'`, `'lowestvideo'`.
-- **Resolutions:** `'1080p'`, `'720p'`, etc.
-- **Format ID / itag:** Use specific itags like `'137'` (1080p video-only), `'140'` (m4a audio), or `'18'` (360p video+audio).
-
-```typescript
-// Download exactly 1080p MP4 (Video only)
-untube('videoId', { format: '137' });
-
-// Download the best audio available
-untube('videoId', { format: 'highestaudio' });
-```
-
-### `mode` (Streaming Behavior)
-By default, `untube` uses **parallel** downloading to maximize speed. 
-
-| Mode | Characteristics | Best for |
-| :--- | :--- | :--- |
-| `'parallel'` (Default) | Incredibly fast. Downloads chunks concurrently into a temp file and streams the result. Emits `progress` events. | Downloading large files, maximum throughput. |
-| `'sequential'` | Pure RAM streaming. Instant start-up. No temp files used. | Real-time audio playback, Discord bots. |
-
-```typescript
-// Use sequential mode for instant start-up time
-const stream = untube('videoId', { format: 'highestaudio', mode: 'sequential' });
-```
+### `untube.getVideoInfo(id, options)`
+| Option | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `proxy` | `string` | `undefined` | Proxy URL (HTTP/HTTPS). |
+| `cookies` | `string \| RawCookie` | `undefined` | Path to Netscape cookie file or `RawCookie` instance. |
 
 ---
 
-## Fetching Metadata
+## Format Selection & Merging
 
-If you only need the video details without downloading the stream, use `untube.getVideoInfo()`:
+> **⚠️ Important Note on Video & Audio:**  
+> YouTube separates most video and audio into different streams (DASH formats). 
+> 
+> - If you choose a video-only format (like `highestvideo`), the resulting file will **not have sound**. 
+> - If you want a single file with both video and audio, you must download the video and audio streams separately and merge them yourself using a tool like **ffmpeg**.
+
+### Common Presets
+- **Presets:** `'highest'`, `'lowest'`, `'highestaudio'`, `'lowestaudio'`, `'highestvideo'`, `'lowestvideo'`.
+- **Resolutions:** `'1080p'`, `'720p'`, etc.
+- **Format ID / itag:** Use specific itags like `'137'` (1080p video-only) or `'140'` (m4a audio).
+
+---
+
+## Format Utilities
+
+`untube` includes utility functions to help you manage and filter formats from the `info` object.
 
 ```typescript
-import untube from 'untube';
-
 const info = await untube.getVideoInfo('videoId');
 
-console.log('Title:', info.title);
-console.log('Views:', info.view_count);
-```
+// 1. Filter formats using presets
+// Available presets: 'audioandvideo', 'video', 'videoonly', 'audio', 'audioonly'
+const audioOnly = untube.filterFormats(info.formats, 'audioonly');
 
-### Format Utilities
+// 2. Filter using custom logic
+const mp4Only = untube.filterFormats(info.formats, f => f.container === 'mp4');
 
-`untube` includes powerful utility functions to help you manage and filter formats from the `info` object.
-
-```typescript
-const info = await untube.getVideoInfo('videoId');
-
-// 1. Choose a specific format manually
+// 3. Choose a specific format manually
 const bestAudio = untube.chooseFormat(info.formats, { quality: 'highestaudio' });
-
-// 2. Filter formats custom logic
-const mp4Only = untube.filterFormats(info.formats, format => format.container === 'mp4');
-
-// 3. Filter using presets ('video', 'audio', 'audioandvideo', 'videoonly', 'audioonly')
-const videoNoSound = untube.filterFormats(info.formats, 'videoonly');
 
 // 4. Sort formats from highest to lowest quality
 const sorted = untube.sortFormats(info.formats);
@@ -151,68 +168,82 @@ const sorted = untube.sortFormats(info.formats);
 
 ---
 
-## YouTube Music Search
-
-You can search for songs directly from YouTube Music using `untube.ytmusic()`:
+### `untube.ytmusic(query, options)`
+Search for songs or videos directly from YouTube Music.
 
 ```typescript
 import untube from 'untube';
 
-// Search YouTube Music
+// Basic usage
 const results = await untube.ytmusic('Never gonna give you up');
 
-console.log(`Found ${results.length} results.`);
-if (results.length > 0) {
-    console.log('Top Result:', results[0].title);
-    console.log('Artist:', results[0].artist);
-    console.log('Video ID:', results[0].videoId);
-    console.log('Type:', results[0].type); // e.g., 'Song', 'Video'
-}
+// With options (e.g., proxy or cookies)
+const resultsWithProxy = await untube.ytmusic('Never gonna give you up', {
+    proxy: 'http://user:pass@host:port',
+    cookies: './cookies.txt'
+});
+
+console.log('Top Result:', results[0].title);
+console.log('Artist:', results[0].artist);
+console.log('Album:', results[0].album);
+console.log('Duration:', results[0].duration, 'seconds');
 ```
 
 ---
 
 ## Cookie Handling
 
-Using cookies is highly recommended to avoid rate limits, access age-restricted (NSFW) videos, or videos only available in specific regions.
+Using cookies is highly recommended to avoid rate limits, access age-restricted videos, or bypass regional restrictions.
 
 ### 1. Using a File (Netscape format)
-1. Install a browser extension like **"Get cookies.txt LOCALLY"** (Chrome/Firefox).
-2. Open YouTube and ensure you are logged in.
-3. Export the cookies in **Netscape format** and save it as `cookies.txt`.
-4. Provide the file path:
-
+Export cookies in **Netscape format** from your browser (e.g., using "Get cookies.txt LOCALLY" extension) and provide the file path:
 ```typescript
 untube('videoId', { cookies: './cookies.txt' });
 ```
 
-### 2. Advanced: Remote Storage (Database / Firebase)
-If you want to store cookies in a remote database or as a string, use the `RawCookie` class:
-
+### 2. Advanced: Remote Storage (Database)
+Use the `RawCookie` class for custom read/write logic (e.g., storing in a database):
 ```typescript
-import untube from 'untube';
-
 const myRawCookie = new untube.RawCookie(
-    async () => {
-        // Implement read logic (e.g., fetch from DB)
-        return await fetchCookiesFromDB(); // Must return Netscape format string
-    },
-    async (newCookies) => {
-        // Implement write logic (called when YouTube refreshes cookies)
-        await saveCookiesToDB(newCookies);
-    }
+    async () => await fetchFromDB(), // Must return Netscape string
+    async (newCookies) => await saveToDB(newCookies)
 );
-
 untube('videoId', { cookies: myRawCookie });
 ```
 
-> **⚠️ Security:** Never share your cookies with anyone as they contain your login session. Ensure local cookie files are added to your `.gitignore`.
+---
+
+## API Reference
+
+### `VideoInfo`
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `id` | `string` | Video ID. |
+| `title` | `string` | Video title. |
+| `description` | `string` | Video description. |
+| `duration` | `number` | Duration in seconds. |
+| `view_count` | `number` | Total views. |
+| `uploader` | `string` | Channel name. |
+| `thumbnail` | `string` | Highest resolution thumbnail URL. |
+| `formats` | `YouTubeFormat[]` | Array of available formats. |
+| `captions` | `YouTubeCaption[]` | Array of available subtitles. |
+
+### `YouTubeFormat`
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `format_id` | `string` | The itag of the format. |
+| `ext` | `string` | File extension (e.g., `'mp4'`, `'webm'`). |
+| `resolution` | `string` | e.g., `'1080p'`, `'audio only'`. |
+| `vcodec` | `string` | Video codec. `'none'` for audio-only. |
+| `acodec` | `string` | Audio codec. `'none'` for video-only. |
+| `filesize` | `number \| null` | File size in bytes. |
+| `url` | `string` | Direct streaming URL (decrypted). |
 
 ---
 
 ## Disclaimer
 
-This project is created for educational and research purposes only. Users are solely responsible for how they use this tool. Ensure you comply with YouTube's Terms of Service and applicable copyright laws in your region. The author is not responsible for any misuse of this tool.
+This project is created for educational purposes only. Users are responsible for complying with YouTube's Terms of Service and local copyright laws.
 
 ## License
 
