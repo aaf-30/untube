@@ -1,4 +1,4 @@
-import fs from 'fs';
+import fs from 'node:fs';
 import { CookieJar, Cookie } from 'tough-cookie';
 
 export class RawCookie {
