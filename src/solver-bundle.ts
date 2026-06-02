@@ -117,6 +117,9 @@ var jsc = (function (meriyah, astring) {
     }
     const options = [];
     if (node.type === 'FunctionDeclaration') {
+      if (node.async) {
+        return null;
+      }
       if (
         node.id &&
         _optionalChain$1([
@@ -142,6 +145,9 @@ var jsc = (function (meriyah, astring) {
       if (node.expression.type !== 'AssignmentExpression') {
         return null;
       }
+      if (node.expression.right && node.expression.right.async) {
+        return null;
+      }
       const name = node.expression.left;
       const body = _optionalChain$1([
         node.expression.right,
@@ -155,6 +161,9 @@ var jsc = (function (meriyah, astring) {
       }
     } else if (node.type === 'VariableDeclaration') {
       for (const declaration of node.declarations) {
+        if (declaration.init && declaration.init.async) {
+          continue;
+        }
         const name = declaration.id;
         const body = _optionalChain$1([
           declaration.init,

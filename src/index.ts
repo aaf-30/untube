@@ -125,7 +125,7 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     if (initialPlayerMatch) {
         try {
             initialPlayerResponse = JSON.parse(initialPlayerMatch[1]!)
-        } catch {}
+        } catch { }
     }
 
     const apiUrl = `https://www.youtube.com/youtubei/v1/player?key=${apiKey}&prettyPrint=false`
@@ -335,7 +335,7 @@ function normalizeYtDlp(json: any): VideoInfo {
         }
 
         const format = f.qualityLabel ? `${f.itag} - ${f.qualityLabel}` : `${f.itag} - ${resolution}`
-        
+
         let language: string | null = null
         let language_preference: number | null = null
         let format_note = f.qualityLabel || f.quality || ''
@@ -344,13 +344,18 @@ function normalizeYtDlp(json: any): VideoInfo {
             language = f.audioTrack.id?.split('.')[0] || null
             language_preference = -1
 
-            if (f.audioTrack.displayName?.toLowerCase().includes('original')) {
-                language_preference = 1
-                format_note = '(original)'
+            const trackName = f.audioTrack.displayName || 'Unknown Track';
+
+            let trackLabel = trackName;
+
+            if (trackName.toLowerCase().includes('original')) {
+                language_preference = 1;
             } else if (f.audioTrack.audioIsDefault) {
-                language_preference = 0
-                format_note = '(default)'
+                language_preference = 0;
+                trackLabel = `${trackName} (default)`;
             }
+
+            format_note = `${trackLabel}, ${format_note}`;
         }
 
         return {
@@ -456,9 +461,9 @@ function untube(id: string, options: UntubeOptions = {}): PassThrough {
     (async () => {
         try {
             const info = await getVideoInfo(id, options);
-            const format = chooseFormat(info.formats, { 
-                quality: options.format, 
-                filter: options.filter 
+            const format = chooseFormat(info.formats, {
+                quality: options.format,
+                filter: options.filter
             });
 
             stream.emit('info', info, format);
@@ -488,16 +493,16 @@ function untube(id: string, options: UntubeOptions = {}): PassThrough {
                 }
 
                 const readStream = createReadStream(tempFile);
-                
+
                 readStream.on('error', (err) => {
                     stream.emit('error', err);
-                    fs.unlink(tempFile).catch(() => {});
+                    fs.unlink(tempFile).catch(() => { });
                 });
 
                 readStream.on('end', () => {
-                    fs.unlink(tempFile).catch(() => {});
+                    fs.unlink(tempFile).catch(() => { });
                 });
-                
+
                 readStream.pipe(stream);
             }
 
@@ -516,5 +521,5 @@ untube.sortFormats = sortFormats;
 untube.chooseFormat = chooseFormat;
 untube.ytmusic = ytmusic;
 
-export { getVideoInfo, RawCookie, filterFormats, sortFormats, chooseFormat, FilterFunction, FilterString, ChooseFormatQuality, ChooseFormatOptions, ytmusic, YTMusicSearchResult, SearchYTMusicOptions }    
+export { getVideoInfo, RawCookie, filterFormats, sortFormats, chooseFormat, FilterFunction, FilterString, ChooseFormatQuality, ChooseFormatOptions, ytmusic, YTMusicSearchResult, SearchYTMusicOptions }
 export default untube;
