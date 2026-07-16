@@ -3,3 +3,5 @@ dist/
 *.log
 .env
 cookies.txt
+test.js
+.env

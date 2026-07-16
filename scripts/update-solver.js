@@ -35,7 +35,21 @@ import * as astring from 'astring';
 
 `;
 
-    const newBundle = header + splitToken + ytParts.slice(1).join(splitToken) + '\n\nexport default jsc;\n';
+    let newBundle = header + splitToken + ytParts.slice(1).join(splitToken) + '\n\nexport default jsc;\n';
+    
+    // Apply the fix: ignore async functions when extracting solvers to prevent crash with cookies
+    newBundle = newBundle.replace(
+        /if\s*\(\s*node\.type\s*===\s*(['"])FunctionDeclaration\1\s*\)\s*\{/,
+        "if (node.type === 'FunctionDeclaration') {\n      if (node.async) {\n        return null;\n      }"
+    );
+    newBundle = newBundle.replace(
+        /if\s*\(\s*node\.expression\.type\s*!==\s*(['"])AssignmentExpression\1\s*\)\s*\{\s*return\s+null\s*;\s*\}/,
+        "if (node.expression.type !== 'AssignmentExpression') {\n        return null;\n      }\n      if (node.expression.right && node.expression.right.async) {\n        return null;\n      }"
+    );
+    newBundle = newBundle.replace(
+        /for\s*\(\s*const\s+declaration\s+of\s+node\.declarations\s*\)\s*\{/,
+        "for (const declaration of node.declarations) {\n        if (declaration.init && declaration.init.async) {\n          continue;\n        }"
+    );
     
     fs.writeFileSync(bundlePath, newBundle, 'utf8');
     console.log('Successfully updated src/solver-bundle.ts with the latest yt.solver.core.js from GitHub releases!');
