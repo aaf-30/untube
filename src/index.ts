@@ -7,7 +7,7 @@ import { PassThrough, Readable } from 'node:stream'
 import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import { downloadVideoParallel } from './downloader.js'
-import { ytmusic, YTMusicSearchResult, SearchYTMusicOptions } from './ytmusic.js'
+import { ytmusic, YTMusicSearchResult, SearchYTMusicOptions, YTMusicTrackInfo, getTrackInfo } from './ytmusic.js'
 
 const globalPreprocessedPlayerCache = new Map<string, any>()
 
@@ -130,7 +130,7 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
 
     const apiUrl = `https://www.youtube.com/youtubei/v1/player?key=${apiKey}&prettyPrint=false`
     const clientName = 'TVHTML5'
-    const clientVersion = '5.20260114'
+    const clientVersion = '5.20260707'
 
     const payload = {
         context: {
@@ -520,6 +520,7 @@ untube.filterFormats = filterFormats;
 untube.sortFormats = sortFormats;
 untube.chooseFormat = chooseFormat;
 untube.ytmusic = ytmusic;
+untube.getTrackInfo = getTrackInfo;
 
-export { getVideoInfo, RawCookie, filterFormats, sortFormats, chooseFormat, FilterFunction, FilterString, ChooseFormatQuality, ChooseFormatOptions, ytmusic, YTMusicSearchResult, SearchYTMusicOptions }
+export { getVideoInfo, RawCookie, filterFormats, sortFormats, chooseFormat, FilterFunction, FilterString, ChooseFormatQuality, ChooseFormatOptions, ytmusic, YTMusicSearchResult, SearchYTMusicOptions, YTMusicTrackInfo, getTrackInfo }
 export default untube;

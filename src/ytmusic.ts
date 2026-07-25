@@ -11,9 +11,26 @@ export interface YTMusicSearchResult {
   thumbnail?: string;
 }
 
+export interface YTMusicTrackInfo {
+  id: string;
+  title: string;
+  artist: string;
+  album?: string;
+  duration?: number;
+  duration_string?: string;
+  thumbnail?: string;
+  thumbnails: any[];
+  webpage_url: string;
+}
+
 export interface SearchYTMusicOptions {
   cookies?: string | RawCookie;
   proxy?: string;
+}
+
+export interface YTMusicFunction {
+  (query: string, options?: SearchYTMusicOptions): Promise<YTMusicSearchResult[]>;
+  getTrackInfo: typeof getTrackInfo;
 }
 
 function timeToSeconds(timeStr: string): number {
@@ -26,7 +43,7 @@ function timeToSeconds(timeStr: string): number {
   return 0;
 }
 
-export async function ytmusic(query: string, options: SearchYTMusicOptions = {}): Promise<YTMusicSearchResult[]> {
+async function searchYTMusic(query: string, options: SearchYTMusicOptions = {}): Promise<YTMusicSearchResult[]> {
   const cm = new CookieManager(options.cookies);
   await cm.load();
 
@@ -193,3 +210,115 @@ export async function ytmusic(query: string, options: SearchYTMusicOptions = {})
 
   return uniqueResults;
 }
+
+function extractVideoId(input: string): string {
+  if (!input) return input;
+  const match = input.match(/(?:v=|\/v\/|youtu\.be\/|\/embed\/|\/watch\?v=|\/watch\?.*&v=)([^"&?/\s]{11})/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  if (input.length === 11 && !input.includes('/') && !input.includes('.')) {
+    return input;
+  }
+  return input;
+}
+
+export async function getTrackInfo(videoIdOrUrl: string, options: SearchYTMusicOptions = {}): Promise<YTMusicTrackInfo> {
+  const videoId = extractVideoId(videoIdOrUrl);
+  if (!videoId) {
+    throw new Error('Invalid YouTube Music video ID or URL.');
+  }
+
+  const cm = new CookieManager(options.cookies);
+  await cm.load();
+
+  const dispatcher = options.proxy ? new ProxyAgent(options.proxy) : undefined;
+  const apiUrl = "https://music.youtube.com/youtubei/v1/next";
+
+  const payload = {
+    context: {
+      client: {
+        clientName: "WEB_REMIX",
+        clientVersion: "1.20231211.01.00",
+        hl: "en",
+        gl: "US"
+      }
+    },
+    videoId
+  };
+
+  const headers: Record<string, string> = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Content-Type': 'application/json',
+    'Origin': 'https://music.youtube.com',
+    'Cookie': cm.getCookieString(apiUrl) || '',
+  };
+
+  let ytMusicTitle = 'Unknown';
+  let ytMusicArtist = 'Unknown';
+  let ytMusicAlbum: string | undefined = undefined;
+  let ytMusicDurationStr: string | undefined = undefined;
+  let ytMusicThumbnail = '';
+  let ytMusicDuration: number | undefined = undefined;
+  let ytMusicThumbnails: any[] = [];
+
+  const response = await fetch(apiUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+    dispatcher
+  } as any);
+
+  if (response.ok) {
+    const data: any = await response.json();
+    const renderer = data.contents?.singleColumnMusicWatchNextResultsRenderer?.tabbedRenderer?.watchNextTabbedResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.musicQueueRenderer?.content?.playlistPanelRenderer?.contents?.[0]?.playlistPanelVideoRenderer;
+
+    if (renderer) {
+      if (renderer.title?.runs?.[0]?.text) {
+        ytMusicTitle = renderer.title.runs[0].text;
+      }
+
+      if (renderer.lengthText?.runs?.[0]?.text) {
+        ytMusicDurationStr = renderer.lengthText.runs[0].text;
+        if (ytMusicDurationStr) {
+          ytMusicDuration = timeToSeconds(ytMusicDurationStr);
+        }
+      }
+
+      const longBylineRuns = renderer.longBylineText?.runs || [];
+      for (const run of longBylineRuns) {
+        if (!run || !run.text || run.text === ' • ') continue;
+        const pageType = run.navigationEndpoint?.browseEndpoint?.browseEndpointContextSupportedConfigs?.browseEndpointContextMusicConfig?.pageType;
+        if (pageType === 'MUSIC_PAGE_TYPE_ARTIST' || pageType === 'MUSIC_PAGE_TYPE_USER_CHANNEL') {
+          ytMusicArtist = run.text.trim();
+        } else if (pageType === 'MUSIC_PAGE_TYPE_ALBUM') {
+          ytMusicAlbum = run.text.trim();
+        }
+      }
+
+      ytMusicThumbnails = renderer.thumbnail?.thumbnails || [];
+      if (ytMusicThumbnails.length > 0) {
+        ytMusicThumbnail = ytMusicThumbnails[ytMusicThumbnails.length - 1].url.replace(/=w\d+-h\d+/, '=w512-h512');
+      }
+    }
+  }
+
+  if (ytMusicTitle === 'Unknown') {
+    throw new Error(`Failed to fetch YouTube Music metadata for video ID: ${videoId}`);
+  }
+
+  return {
+    id: videoId,
+    title: ytMusicTitle,
+    artist: ytMusicArtist,
+    album: ytMusicAlbum,
+    duration: ytMusicDuration,
+    duration_string: ytMusicDurationStr,
+    thumbnail: ytMusicThumbnail,
+    thumbnails: ytMusicThumbnails,
+    webpage_url: `https://music.youtube.com/watch?v=${videoId}`
+  };
+}
+
+export const ytmusic: YTMusicFunction = Object.assign(searchYTMusic, { getTrackInfo });
+
