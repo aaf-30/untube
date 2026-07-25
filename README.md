@@ -189,6 +189,23 @@ console.log('Album:', results[0].album);
 console.log('Duration:', results[0].duration, 'seconds');
 ```
 
+### `untube.ytmusic.getTrackInfo(idOrUrl, options)`
+Fetch detailed track metadata (title, artist, album, duration, thumbnails) directly from YouTube Music by track video ID or URL.
+
+```typescript
+import untube from 'untube';
+// or import { getTrackInfo } from 'untube';
+
+// Fetch track metadata by YouTube Music URL or ID
+const track = await untube.ytmusic.getTrackInfo('https://music.youtube.com/watch?v=dQw4w9WgXcQ');
+
+console.log('Title:', track.title);
+console.log('Artist:', track.artist);
+console.log('Album:', track.album);
+console.log('Duration:', track.duration, 'seconds (', track.duration_string, ')');
+console.log('Thumbnail:', track.thumbnail);
+```
+
 ---
 
 ## Cookie Handling
@@ -238,6 +255,19 @@ untube('videoId', { cookies: myRawCookie });
 | `acodec` | `string` | Audio codec. `'none'` for video-only. |
 | `filesize` | `number \| null` | File size in bytes. |
 | `url` | `string` | Direct streaming URL (decrypted). |
+
+### `YTMusicTrackInfo`
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `id` | `string` | YouTube Music track video ID. |
+| `title` | `string` | Track title. |
+| `artist` | `string` | Artist name. |
+| `album` | `string \| undefined` | Album title if available. |
+| `duration` | `number \| undefined` | Track duration in seconds. |
+| `duration_string` | `string \| undefined` | Formatted duration string (e.g., `'3:34'`). |
+| `thumbnail` | `string` | Highest resolution thumbnail URL. |
+| `thumbnails` | `any[]` | Array of available thumbnail objects. |
+| `webpage_url` | `string` | Full YouTube Music webpage URL. |
 
 ---
 
