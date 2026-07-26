@@ -132,7 +132,7 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     const clientName = 'TVHTML5'
     const clientVersion = '5.20260707'
 
-    const payload = {
+    const payload: any = {
         context: {
             client: {
                 clientName,
@@ -143,6 +143,8 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
             },
         },
         videoId,
+        racyCheckOk: true,
+        contentCheckOk: true,
         playbackContext: {
             contentPlaybackContext: {
                 html5Preference: 'HTML5_PREF_WANTS',
