@@ -4,13 +4,13 @@ import untube from '../dist/index.js';
 
 async function testDownload() {
     console.log('--- Starting Download Test ---');
-    const videoId = 'dQw4w9WgXcQ';
-    const outputFile = path.join(process.cwd(), 'test_download.mp4');
+    const videoId = 'pAZwZuGCSwI';
+    const outputFile = path.join(process.cwd(), 'test_pAZwZuGCSwI_140.m4a');
 
     console.log(`[1] Fetching info and starting download for: ${videoId}`);
     
     const stream = untube(videoId, {
-        format: '136',
+        format: '140',
         mode: 'parallel'
     });
 

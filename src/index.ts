@@ -69,9 +69,68 @@ export interface VideoInfo {
     availability: string
 }
 
+export interface InnerTubeClientConfig {
+    name: string
+    clientName: string
+    clientVersion: string
+    clientId: string
+    userAgent: string
+    origin: string
+    deviceMake?: string
+    deviceModel?: string
+    osName?: string
+    osVersion?: string
+    thirdParty?: {
+        embedUrl?: string
+    }
+}
+
+export const CLIENT_CONFIGS: Record<string, InnerTubeClientConfig> = {
+    visionos: {
+        name: 'visionos',
+        clientName: 'VISIONOS',
+        clientVersion: '1.02',
+        clientId: '101',
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
+        origin: 'https://www.youtube.com',
+        deviceMake: 'Apple',
+        deviceModel: 'RealityDevice17,1',
+        osName: 'visionOS',
+        osVersion: '26.5.23O471'
+    },
+    web_embedded: {
+        name: 'web_embedded',
+        clientName: 'WEB_EMBEDDED_PLAYER',
+        clientVersion: '2.20260708.00.00',
+        clientId: '56',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        origin: 'https://www.youtube.com',
+        thirdParty: {
+            embedUrl: 'https://www.reddit.com/'
+        }
+    },
+    mweb: {
+        name: 'mweb',
+        clientName: 'MWEB',
+        clientVersion: '2.20241029.07.00',
+        clientId: '2',
+        userAgent: 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        origin: 'https://m.youtube.com'
+    },
+    tv_downgraded: {
+        name: 'tv_downgraded',
+        clientName: 'TVHTML5',
+        clientVersion: '5.20260707',
+        clientId: '7',
+        userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
+        origin: 'https://www.youtube.com'
+    }
+}
+
 export interface GetVideoInfoOptions {
     cookies?: string | RawCookie
     proxy?: string
+    client?: 'visionos' | 'web_embedded' | 'mweb' | 'tv_downgraded' | string
 }
 
 /**
@@ -119,6 +178,7 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     const ytcfg = JSON.parse(`{${ytcfgMatch[1]}}`)
     const apiKey = ytcfg.INNERTUBE_API_KEY
     const sts = ytcfg.STS
+    const visitorData = ytcfg.VISITOR_DATA
 
     let initialPlayerResponse: any = {}
     const initialPlayerMatch = pageHtml.match(/ytInitialPlayerResponse\s*=\s*(\{.*?\});/)
@@ -129,72 +189,118 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     }
 
     const apiUrl = `https://www.youtube.com/youtubei/v1/player?key=${apiKey}&prettyPrint=false`
-    const clientName = 'MWEB'
-    const clientVersion = ytcfg.INNERTUBE_CLIENT_VERSION || '2.20241029.07.00'
-    const userAgent = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
-
-    const payload: any = {
-        context: {
-            client: {
-                clientName,
-                clientVersion,
-                userAgent,
-                hl: 'en',
-                gl: 'US',
-            },
-        },
-        videoId,
-        racyCheckOk: true,
-        contentCheckOk: true,
-        playbackContext: {
-            contentPlaybackContext: {
-                html5Preference: 'HTML5_PREF_WANTS',
-                signatureTimestamp: sts,
-            },
-        },
-    }
-
     const apiCookieString = cm.getCookieString(apiUrl)
-
-    const apiHeaders: Record<string, string> = {
-        'User-Agent': userAgent,
-        'Content-Type': 'application/json',
-        'X-Youtube-Client-Name': '2',
-        'X-Youtube-Client-Version': clientVersion,
-        'Origin': 'https://m.youtube.com',
-    }
-    if (apiCookieString) {
-        apiHeaders['Cookie'] = apiCookieString
-    }
-
     const sapisidCookie = cm.jar.getCookiesSync(apiUrl).find((c: any) => c.key === 'SAPISID')
-    if (sapisidCookie) {
-        const timestamp = Math.floor(Date.now() / 1000).toString()
-        const hash = crypto.createHash('sha1').update(`${timestamp} ${sapisidCookie.value} https://m.youtube.com`).digest('hex')
-        apiHeaders.Authorization = `SAPISIDHASH ${timestamp}_${hash}`
+    const hasAuthCookie = !!sapisidCookie
+
+    let candidateClientNames: string[]
+    if (options.client) {
+        candidateClientNames = [options.client]
+    } else if (hasAuthCookie) {
+        candidateClientNames = ['mweb', 'tv_downgraded', 'web_embedded']
+    } else {
+        candidateClientNames = ['visionos', 'web_embedded', 'mweb']
     }
 
-    const apiRes = await fetch(apiUrl, {
-        method: 'POST',
-        headers: apiHeaders,
-        body: JSON.stringify(payload),
-        dispatcher,
-    } as any)
+    let json: any = null
+    let lastError: any = null
 
-    const apiSetCookies = (apiRes.headers as any).getSetCookie()
-    if (apiSetCookies && apiSetCookies.length > 0) {
-        apiSetCookies.forEach((cookie: any) => cm.setCookieString(cookie, apiUrl))
-        await cm.save()
+    for (const clientKey of candidateClientNames) {
+        const clientConfig = CLIENT_CONFIGS[clientKey] || CLIENT_CONFIGS.visionos!
+        const clientVersion = (clientKey === 'mweb' && ytcfg.INNERTUBE_CLIENT_VERSION) ? ytcfg.INNERTUBE_CLIENT_VERSION : clientConfig.clientVersion
+
+        const clientPayload: any = {
+            clientName: clientConfig.clientName,
+            clientVersion,
+            userAgent: clientConfig.userAgent,
+            hl: 'en',
+            gl: 'US'
+        }
+        if (clientConfig.deviceMake) clientPayload.deviceMake = clientConfig.deviceMake
+        if (clientConfig.deviceModel) clientPayload.deviceModel = clientConfig.deviceModel
+        if (clientConfig.osName) clientPayload.osName = clientConfig.osName
+        if (clientConfig.osVersion) clientPayload.osVersion = clientConfig.osVersion
+
+        const payload: any = {
+            context: {
+                client: clientPayload
+            },
+            videoId,
+            racyCheckOk: true,
+            contentCheckOk: true,
+            playbackContext: {
+                contentPlaybackContext: {
+                    html5Preference: 'HTML5_PREF_WANTS',
+                    signatureTimestamp: sts
+                }
+            }
+        }
+        if (clientConfig.thirdParty) {
+            payload.context.thirdParty = clientConfig.thirdParty
+        }
+
+        const apiHeaders: Record<string, string> = {
+            'User-Agent': clientConfig.userAgent,
+            'Content-Type': 'application/json',
+            'X-Youtube-Client-Name': clientConfig.clientId,
+            'X-Youtube-Client-Version': clientVersion,
+            'Origin': clientConfig.origin
+        }
+        if (visitorData) {
+            apiHeaders['X-Goog-Visitor-Id'] = visitorData
+        }
+        if (apiCookieString) {
+            apiHeaders['Cookie'] = apiCookieString
+        }
+        if (sapisidCookie) {
+            const timestamp = Math.floor(Date.now() / 1000).toString()
+            const hash = crypto.createHash('sha1').update(`${timestamp} ${sapisidCookie.value} ${clientConfig.origin}`).digest('hex')
+            apiHeaders.Authorization = `SAPISIDHASH ${timestamp}_${hash}`
+        }
+
+        try {
+            const apiRes = await fetch(apiUrl, {
+                method: 'POST',
+                headers: apiHeaders,
+                body: JSON.stringify(payload),
+                dispatcher
+            } as any)
+
+            const apiSetCookies = (apiRes.headers as any).getSetCookie()
+            if (apiSetCookies && apiSetCookies.length > 0) {
+                apiSetCookies.forEach((cookie: any) => cm.setCookieString(cookie, apiUrl))
+                await cm.save()
+            }
+
+            if (!apiRes.ok) {
+                lastError = new Error(`InnerTube API failed (${clientKey}): ${apiRes.status} ${apiRes.statusText}`)
+                continue
+            }
+
+            const resJson: any = await apiRes.json()
+            if (resJson.playabilityStatus && resJson.playabilityStatus.status !== 'OK') {
+                lastError = new Error(`YouTube Error (${clientKey}): ${resJson.playabilityStatus.reason || resJson.playabilityStatus.status}`)
+                continue
+            }
+
+            const fmts = [
+                ...(resJson.streamingData?.formats || []),
+                ...(resJson.streamingData?.adaptiveFormats || [])
+            ]
+            if (fmts.length === 0) {
+                lastError = new Error(`No streaming formats returned for client ${clientKey}`)
+                continue
+            }
+
+            json = resJson
+            break
+        } catch (err: any) {
+            lastError = err
+        }
     }
 
-    if (!apiRes.ok) {
-        throw new Error(`InnerTube API failed: ${apiRes.status} ${apiRes.statusText}`)
-    }
-
-    const json: any = await apiRes.json()
-
-    if (json.playabilityStatus && json.playabilityStatus.status !== 'OK') {
-        throw new Error(`YouTube Error: ${json.playabilityStatus.reason || json.playabilityStatus.status}`)
+    if (!json) {
+        throw (lastError || new Error('Failed to retrieve video information from any InnerTube client.'))
     }
 
     const getPreprocessedPlayer = async () => {
@@ -474,13 +580,20 @@ function untube(id: string, options: UntubeOptions = {}): PassThrough {
 
             stream.emit('info', info, format);
 
+            const baseHeaders: Record<string, string> = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Origin': 'https://www.youtube.com',
+                'Referer': 'https://www.youtube.com/'
+            };
+
             if (options.mode === 'sequential' || format.url.includes('.m3u8')) {
                 const dispatcher = options.proxy ? new ProxyAgent(options.proxy) : undefined;
-                const fetchOptions: any = { dispatcher, signal: options.signal };
+                const requestHeaders: Record<string, string> = { ...baseHeaders };
 
                 if (!format.url.includes('.m3u8')) {
-                    fetchOptions.headers = { Range: 'bytes=0-' };
+                    requestHeaders.Range = 'bytes=0-';
                 }
+                const fetchOptions: any = { headers: requestHeaders, dispatcher, signal: options.signal };
 
                 const response = await fetch(format.url, fetchOptions);
                 if (!response.ok || !response.body) {
@@ -490,9 +603,15 @@ function untube(id: string, options: UntubeOptions = {}): PassThrough {
                 webStream.on('error', (err) => stream.emit('error', err));
                 webStream.pipe(stream);
             } else {
-                const tempFile = await downloadVideoParallel(format.url, options.proxy, options.signal, (percent) => {
-                    stream.emit('progress', percent);
-                });
+                const tempFile = await downloadVideoParallel(
+                    format.url,
+                    options.proxy,
+                    options.signal,
+                    (percent) => {
+                        stream.emit('progress', percent);
+                    },
+                    baseHeaders
+                );
 
                 if (!tempFile) {
                     throw new Error('Download failed, no file returned.');

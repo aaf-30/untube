@@ -18,10 +18,23 @@ export interface DownloadProgress {
   totalBytes: number;
 }
 
-export async function downloadVideoParallel(url: string, proxy?: string, signal?: AbortSignal, onProgressCallback: ((progress: DownloadProgress) => void) | null = null): Promise<string | null> {
+export async function downloadVideoParallel(
+  url: string,
+  proxy?: string,
+  signal?: AbortSignal,
+  onProgressCallback: ((progress: DownloadProgress) => void) | null = null,
+  customHeaders: Record<string, string> = {}
+): Promise<string | null> {
   const tempFileName = `download_${randomUUID()}.mp4`
   const filePath = path.join(os.tmpdir(), tempFileName)
   const dispatcher = proxy ? new ProxyAgent(proxy) : undefined
+
+  const baseHeaders: Record<string, string> = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Origin': 'https://www.youtube.com',
+    'Referer': 'https://www.youtube.com/',
+    ...customHeaders
+  }
 
   const cleanupTempFile = () => {
     try {
@@ -43,7 +56,7 @@ export async function downloadVideoParallel(url: string, proxy?: string, signal?
     async function downloadAndWriteChunk(start: number, end: number, chunkIndex: number, retryCount: number = 0): Promise<void> {
       try {
         const response = await fetch(url, {
-          headers: { Range: `bytes=${start}-${end}` },
+          headers: { ...baseHeaders, Range: `bytes=${start}-${end}` },
           signal: signal || AbortSignal.timeout(30000),
           dispatcher
         } as any)
@@ -66,7 +79,7 @@ export async function downloadVideoParallel(url: string, proxy?: string, signal?
     try {
       const headResponse = await fetch(url, {
         method: 'HEAD',
-        headers: { 'Accept-Encoding': 'identity' },
+        headers: { ...baseHeaders, 'Accept-Encoding': 'identity' },
         dispatcher
       } as any)
 
@@ -79,7 +92,7 @@ export async function downloadVideoParallel(url: string, proxy?: string, signal?
 
       if (!acceptRanges || Number.isNaN(totalSize)) {
         console.log(`[Downloader] Range not supported or unknown size. Using fallback streaming...`)
-        const response = await fetch(url, { dispatcher, signal } as any)
+        const response = await fetch(url, { headers: baseHeaders, dispatcher, signal } as any)
         if (!response.ok || !response.body)
           throw new Error(`Fallback HTTP Error: ${response.status}`)
 
