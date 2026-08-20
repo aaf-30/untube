@@ -129,15 +129,16 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     }
 
     const apiUrl = `https://www.youtube.com/youtubei/v1/player?key=${apiKey}&prettyPrint=false`
-    const clientName = 'TVHTML5'
-    const clientVersion = '5.20260707'
+    const clientName = 'MWEB'
+    const clientVersion = ytcfg.INNERTUBE_CLIENT_VERSION || '2.20241029.07.00'
+    const userAgent = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
 
     const payload: any = {
         context: {
             client: {
                 clientName,
                 clientVersion,
-                userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
+                userAgent,
                 hl: 'en',
                 gl: 'US',
             },
@@ -156,11 +157,11 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     const apiCookieString = cm.getCookieString(apiUrl)
 
     const apiHeaders: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
+        'User-Agent': userAgent,
         'Content-Type': 'application/json',
-        'X-Youtube-Client-Name': '7',
+        'X-Youtube-Client-Name': '2',
         'X-Youtube-Client-Version': clientVersion,
-        'Origin': 'https://www.youtube.com',
+        'Origin': 'https://m.youtube.com',
     }
     if (apiCookieString) {
         apiHeaders['Cookie'] = apiCookieString
@@ -169,7 +170,7 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     const sapisidCookie = cm.jar.getCookiesSync(apiUrl).find((c: any) => c.key === 'SAPISID')
     if (sapisidCookie) {
         const timestamp = Math.floor(Date.now() / 1000).toString()
-        const hash = crypto.createHash('sha1').update(`${timestamp} ${sapisidCookie.value} https://www.youtube.com`).digest('hex')
+        const hash = crypto.createHash('sha1').update(`${timestamp} ${sapisidCookie.value} https://m.youtube.com`).digest('hex')
         apiHeaders.Authorization = `SAPISIDHASH ${timestamp}_${hash}`
     }
 
@@ -224,8 +225,9 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     const nChallenges: string[] = []
 
     for (const format of allFormats) {
-        if (format.signatureCipher) {
-            const searchParams = new URLSearchParams(format.signatureCipher)
+        const cipher = format.signatureCipher || format.cipher
+        if (cipher) {
+            const searchParams = new URLSearchParams(cipher)
             const s = searchParams.get('s')
             if (s) sigChallenges.push(s)
 
@@ -260,8 +262,9 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         const nData = result.responses?.find((r: any) => r.type === 'result' && nChallenges.includes(Object.keys(r.data || {})[0]!))?.data || {}
 
         for (const format of allFormats) {
-            if (format.signatureCipher) {
-                const searchParams = new URLSearchParams(format.signatureCipher)
+            const cipher = format.signatureCipher || format.cipher
+            if (cipher) {
+                const searchParams = new URLSearchParams(cipher)
                 const baseUrl = searchParams.get('url')
                 const sp = searchParams.get('sp') || 'sig'
                 const s = searchParams.get('s')
@@ -276,6 +279,7 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
                     format.url = u.toString()
                 }
                 delete format.signatureCipher
+                delete format.cipher
             } else if (format.url) {
                 const u = new URL(format.url)
                 const n = u.searchParams.get('n')
@@ -403,7 +407,7 @@ function normalizeYtDlp(json: any): VideoInfo {
     if (json.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
         for (const track of json.captions.playerCaptionsTracklistRenderer.captionTracks) {
             captions.push({
-                url: track.baseUrl,
+                url: track.baseUrl?.startsWith('http') ? track.baseUrl : `https://www.youtube.com${track.baseUrl}`,
                 ext: 'vtt', // Default format for YouTube captions
                 name: track.name?.simpleText || track.languageCode,
                 language: track.languageCode,
