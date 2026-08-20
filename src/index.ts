@@ -191,15 +191,12 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     const apiUrl = `https://www.youtube.com/youtubei/v1/player?key=${apiKey}&prettyPrint=false`
     const apiCookieString = cm.getCookieString(apiUrl)
     const sapisidCookie = cm.jar.getCookiesSync(apiUrl).find((c: any) => c.key === 'SAPISID')
-    const hasAuthCookie = !!sapisidCookie
 
     let candidateClientNames: string[]
     if (options.client) {
         candidateClientNames = [options.client]
-    } else if (hasAuthCookie) {
-        candidateClientNames = ['mweb', 'tv_downgraded', 'web_embedded']
     } else {
-        candidateClientNames = ['visionos', 'web_embedded', 'mweb']
+        candidateClientNames = ['visionos', 'mweb', 'web_embedded', 'tv_downgraded']
     }
 
     let json: any = null
@@ -249,13 +246,15 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         if (visitorData) {
             apiHeaders['X-Goog-Visitor-Id'] = visitorData
         }
-        if (apiCookieString) {
-            apiHeaders['Cookie'] = apiCookieString
-        }
-        if (sapisidCookie) {
-            const timestamp = Math.floor(Date.now() / 1000).toString()
-            const hash = crypto.createHash('sha1').update(`${timestamp} ${sapisidCookie.value} ${clientConfig.origin}`).digest('hex')
-            apiHeaders.Authorization = `SAPISIDHASH ${timestamp}_${hash}`
+        if (clientKey !== 'visionos') {
+            if (apiCookieString) {
+                apiHeaders['Cookie'] = apiCookieString
+            }
+            if (sapisidCookie) {
+                const timestamp = Math.floor(Date.now() / 1000).toString()
+                const hash = crypto.createHash('sha1').update(`${timestamp} ${sapisidCookie.value} ${clientConfig.origin}`).digest('hex')
+                apiHeaders.Authorization = `SAPISIDHASH ${timestamp}_${hash}`
+            }
         }
 
         try {
@@ -267,7 +266,7 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
             } as any)
 
             const apiSetCookies = (apiRes.headers as any).getSetCookie()
-            if (apiSetCookies && apiSetCookies.length > 0) {
+            if (apiSetCookies && apiSetCookies.length > 0 && clientKey !== 'visionos') {
                 apiSetCookies.forEach((cookie: any) => cm.setCookieString(cookie, apiUrl))
                 await cm.save()
             }
