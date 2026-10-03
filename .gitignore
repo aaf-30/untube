@@ -4,5 +4,5 @@ dev-test/
 *.log
 .env
 cookies.txt
-test.js
+test*.js
 .env

@@ -131,6 +131,7 @@ export interface GetVideoInfoOptions {
     cookies?: string | RawCookie
     proxy?: string
     client?: 'visionos' | 'web_embedded' | 'mweb' | 'tv_downgraded' | string
+    potProviderUrl?: string
 }
 
 /**
@@ -201,8 +202,10 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
 
     let json: any = null
     let lastError: any = null
+    let generatedPoToken: string | undefined = undefined
 
     for (const clientKey of candidateClientNames) {
+        generatedPoToken = undefined;
         const clientConfig = CLIENT_CONFIGS[clientKey] || CLIENT_CONFIGS.visionos!
         const clientVersion = (clientKey === 'mweb' && ytcfg.INNERTUBE_CLIENT_VERSION) ? ytcfg.INNERTUBE_CLIENT_VERSION : clientConfig.clientVersion
 
@@ -234,6 +237,24 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         }
         if (clientConfig.thirdParty) {
             payload.context.thirdParty = clientConfig.thirdParty
+        }
+
+        if (clientKey !== 'visionos' && options.potProviderUrl) {
+            try {
+                const res = await fetch(options.potProviderUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const tokenData = await res.json() as any;
+                const poToken = tokenData?.poToken || tokenData?.po_token;
+                if (poToken) {
+                    generatedPoToken = poToken;
+                    payload.serviceIntegrityDimensions = { poToken };
+                }
+            } catch (err) {
+                console.warn('Failed to fetch PO Token from provider:', (err as Error).message);
+            }
         }
 
         const apiHeaders: Record<string, string> = {
@@ -391,6 +412,28 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
                 if (n && nData[n]) {
                     u.searchParams.set('n', nData[n])
                     format.url = u.toString()
+                }
+            }
+        }
+    }
+    
+    // Append PO Token to format URLs if generated
+    if (generatedPoToken) {
+        if (json.streamingData?.formats) {
+            for (const format of json.streamingData.formats) {
+                if (format.url) {
+                    const u = new URL(format.url);
+                    u.searchParams.set('pot', generatedPoToken);
+                    format.url = u.toString();
+                }
+            }
+        }
+        if (json.streamingData?.adaptiveFormats) {
+            for (const format of json.streamingData.adaptiveFormats) {
+                if (format.url) {
+                    const u = new URL(format.url);
+                    u.searchParams.set('pot', generatedPoToken);
+                    format.url = u.toString();
                 }
             }
         }
