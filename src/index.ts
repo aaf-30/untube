@@ -321,9 +321,20 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
                 ...(resJson.streamingData?.formats || []),
                 ...(resJson.streamingData?.adaptiveFormats || [])
             ]
-            if (fmts.length === 0) {
-                lastError = new Error(`No streaming formats returned for client ${clientKey}`)
+            
+            const usableFmts = fmts.filter((f: any) => f.url || f.signatureCipher || f.cipher)
+            if (usableFmts.length === 0) {
+                lastError = new Error(`No usable streaming formats returned for client ${clientKey}`)
                 continue
+            }
+
+            const adaptiveFmts = resJson.streamingData?.adaptiveFormats || []
+            if (adaptiveFmts.length > 0) {
+                const usableAdaptive = adaptiveFmts.filter((f: any) => f.url || f.signatureCipher || f.cipher)
+                if (usableAdaptive.length === 0) {
+                    lastError = new Error(`YouTube Error (${clientKey}): Soft-block detected (HD/adaptive formats missing URLs)`)
+                    continue
+                }
             }
 
             // Test CDN URL for 403 Forbidden (Prioritizing itag 140 / m4a audio)
