@@ -86,6 +86,14 @@ export interface InnerTubeClientConfig {
 }
 
 export const CLIENT_CONFIGS: Record<string, InnerTubeClientConfig> = {
+    web: {
+        name: 'web',
+        clientName: 'WEB',
+        clientVersion: '2.20260708.00.00',
+        clientId: '1',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        origin: 'https://www.youtube.com'
+    },
     visionos: {
         name: 'visionos',
         clientName: 'VISIONOS',
@@ -130,7 +138,7 @@ export const CLIENT_CONFIGS: Record<string, InnerTubeClientConfig> = {
 export interface GetVideoInfoOptions {
     cookies?: string | RawCookie
     proxy?: string
-    client?: 'visionos' | 'web_embedded' | 'mweb' | 'tv_downgraded' | string
+    client?: 'visionos' | 'web' | 'web_embedded' | 'mweb' | 'tv_downgraded' | string
     potProviderUrl?: string
 }
 
@@ -197,7 +205,7 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     if (options.client) {
         candidateClientNames = [options.client]
     } else {
-        candidateClientNames = ['visionos', 'mweb', 'web_embedded', 'tv_downgraded']
+        candidateClientNames = ['visionos', 'web', 'mweb', 'web_embedded', 'tv_downgraded']
     }
 
     let json: any = null
