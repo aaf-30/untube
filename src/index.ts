@@ -67,6 +67,7 @@ export interface VideoInfo {
     formats: YouTubeFormat[]
     captions: YouTubeCaption[]
     availability: string
+    _client?: string
 }
 
 export interface InnerTubeClientConfig {
@@ -211,6 +212,7 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     let json: any = null
     let lastError: any = null
     let generatedPoToken: string | undefined = undefined
+    let successfulClient: string = ''
 
     for (const clientKey of candidateClientNames) {
         if (clientKey === 'web' && !apiCookieString) {
@@ -341,6 +343,7 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
             }
 
             json = resJson
+            successfulClient = clientKey
             break
         } catch (err: any) {
             lastError = err
@@ -470,7 +473,9 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     json.videoDetails = { ...(initialPlayerResponse.videoDetails || {}), ...(json.videoDetails || {}) }
     json.microformat = initialPlayerResponse.microformat || json.microformat
 
-    return normalizeYtDlp(json)
+    const result = normalizeYtDlp(json)
+    result._client = successfulClient
+    return result
 }
 
 function normalizeYtDlp(json: any): VideoInfo {
