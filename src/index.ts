@@ -213,6 +213,10 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     let generatedPoToken: string | undefined = undefined
 
     for (const clientKey of candidateClientNames) {
+        if (clientKey === 'web' && !apiCookieString) {
+            continue;
+        }
+
         generatedPoToken = undefined;
         const clientConfig = CLIENT_CONFIGS[clientKey] || CLIENT_CONFIGS.visionos!
         const clientVersion = (clientKey === 'mweb' && ytcfg.INNERTUBE_CLIENT_VERSION) ? ytcfg.INNERTUBE_CLIENT_VERSION : clientConfig.clientVersion
@@ -318,6 +322,22 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
             if (fmts.length === 0) {
                 lastError = new Error(`No streaming formats returned for client ${clientKey}`)
                 continue
+            }
+
+            // Test CDN URL for 403 Forbidden (Prioritizing itag 140 / m4a audio)
+            const testFormat = fmts.find((f: any) => f.itag === 140 && f.url) || fmts.find((f: any) => f.url)
+            if (testFormat) {
+                const testUrlObj = new URL(testFormat.url)
+                if (generatedPoToken) testUrlObj.searchParams.set('pot', generatedPoToken)
+                try {
+                    const headRes = await fetch(testUrlObj.toString(), { method: 'HEAD', dispatcher } as any)
+                    if (headRes.status === 403) {
+                        lastError = new Error(`YouTube Error (${clientKey}): CDN returned 403 Forbidden`)
+                        continue
+                    }
+                } catch (e) {
+                    // Ignore network errors for HEAD check
+                }
             }
 
             json = resJson
