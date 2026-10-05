@@ -11,6 +11,86 @@ import { ytmusic, YTMusicSearchResult, SearchYTMusicOptions, YTMusicTrackInfo, g
 
 const globalPreprocessedPlayerCache = new Map<string, any>()
 
+interface CachedPoToken {
+    poToken: string
+    visitorData?: string
+    expires: number
+}
+
+const poTokenCache = new Map<string, CachedPoToken>()
+const POT_CACHE_TTL_MS = 6 * 60 * 60 * 1000
+
+/**
+ * bgutil-ytdlp-pot-provider exposes its HTTP API at `/get_pot`.
+ * Accept either a base URL (https://host) or the full endpoint.
+ */
+function resolvePotEndpoint(providerUrl: string): string {
+    try {
+        const url = new URL(providerUrl)
+        if (url.pathname === '' || url.pathname === '/') {
+            url.pathname = '/get_pot'
+        }
+        return url.toString()
+    } catch {
+        return providerUrl
+    }
+}
+
+/**
+ * Request a PO token from an external provider (e.g. bgutil-ytdlp-pot-provider).
+ * The token must be bound to the same visitor data that is used for the
+ * InnerTube request, otherwise YouTube rejects it.
+ */
+async function fetchPoToken(
+    endpoint: string,
+    contentBinding: string | undefined,
+    dispatcher: any
+): Promise<{ poToken: string; visitorData?: string } | null> {
+    try {
+        const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(contentBinding ? { content_binding: contentBinding } : {}),
+            dispatcher
+        } as any)
+        if (!res.ok) {
+            console.warn(`PO Token provider returned ${res.status} ${res.statusText}`)
+            return null
+        }
+        const data: any = await res.json()
+        const poToken = data?.poToken || data?.po_token
+        if (!poToken) {
+            console.warn('PO Token provider response did not contain a token')
+            return null
+        }
+        return {
+            poToken,
+            visitorData: data?.contentBinding || data?.visitor_data || data?.visitorData
+        }
+    } catch (err) {
+        console.warn('Failed to fetch PO Token from provider:', (err as Error).message)
+        return null
+    }
+}
+
+async function getPoToken(
+    providerUrl: string,
+    contentBinding: string | undefined,
+    dispatcher: any
+): Promise<CachedPoToken | null> {
+    const endpoint = resolvePotEndpoint(providerUrl)
+    const cacheKey = `${endpoint}|${contentBinding || ''}`
+    const cached = poTokenCache.get(cacheKey)
+    if (cached && cached.expires > Date.now()) return cached
+
+    const fresh = await fetchPoToken(endpoint, contentBinding, dispatcher)
+    if (!fresh) return null
+
+    const entry: CachedPoToken = { ...fresh, expires: Date.now() + POT_CACHE_TTL_MS }
+    poTokenCache.set(cacheKey, entry)
+    return entry
+}
+
 export interface YouTubeFormat {
     asr: number | null
     filesize: number | null
@@ -81,9 +161,6 @@ export interface InnerTubeClientConfig {
     deviceModel?: string
     osName?: string
     osVersion?: string
-    thirdParty?: {
-        embedUrl?: string
-    }
 }
 
 export const CLIENT_CONFIGS: Record<string, InnerTubeClientConfig> = {
@@ -107,17 +184,6 @@ export const CLIENT_CONFIGS: Record<string, InnerTubeClientConfig> = {
         osName: 'visionOS',
         osVersion: '26.5.23O471'
     },
-    web_embedded: {
-        name: 'web_embedded',
-        clientName: 'WEB_EMBEDDED_PLAYER',
-        clientVersion: '2.20260708.00.00',
-        clientId: '56',
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        origin: 'https://www.youtube.com',
-        thirdParty: {
-            embedUrl: 'https://www.reddit.com/'
-        }
-    },
     mweb: {
         name: 'mweb',
         clientName: 'MWEB',
@@ -125,21 +191,13 @@ export const CLIENT_CONFIGS: Record<string, InnerTubeClientConfig> = {
         clientId: '2',
         userAgent: 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
         origin: 'https://m.youtube.com'
-    },
-    tv_downgraded: {
-        name: 'tv_downgraded',
-        clientName: 'TVHTML5',
-        clientVersion: '5.20260707',
-        clientId: '7',
-        userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
-        origin: 'https://www.youtube.com'
     }
 }
 
 export interface GetVideoInfoOptions {
     cookies?: string | RawCookie
     proxy?: string
-    client?: 'visionos' | 'web' | 'web_embedded' | 'mweb' | 'tv_downgraded' | string
+    client?: 'visionos' | 'mweb' | 'web' | string
     potProviderUrl?: string
 }
 
@@ -204,9 +262,14 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
 
     let candidateClientNames: string[]
     if (options.client) {
+        if (!CLIENT_CONFIGS[options.client]) {
+            throw new Error(`Unknown InnerTube client "${options.client}". Available clients: ${Object.keys(CLIENT_CONFIGS).join(', ')}`)
+        }
         candidateClientNames = [options.client]
     } else {
-        candidateClientNames = ['visionos', 'web', 'mweb', 'web_embedded', 'tv_downgraded']
+        // visionos needs no cookies/PO token; mweb unlocks logged-in content;
+        // web is kept as a last resort (may need a PO token and is experiment-prone).
+        candidateClientNames = ['visionos', 'mweb', 'web']
     }
 
     let json: any = null
@@ -220,7 +283,7 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         }
 
         generatedPoToken = undefined;
-        const clientConfig = CLIENT_CONFIGS[clientKey] || CLIENT_CONFIGS.visionos!
+        const clientConfig = CLIENT_CONFIGS[clientKey]!
         const clientVersion = (clientKey === 'mweb' && ytcfg.INNERTUBE_CLIENT_VERSION) ? ytcfg.INNERTUBE_CLIENT_VERSION : clientConfig.clientVersion
 
         const clientPayload: any = {
@@ -249,26 +312,19 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
                 }
             }
         }
-        if (clientConfig.thirdParty) {
-            payload.context.thirdParty = clientConfig.thirdParty
-        }
-
+        let clientVisitorData: string | undefined = visitorData
         if (clientKey !== 'visionos' && options.potProviderUrl) {
-            try {
-                const res = await fetch(options.potProviderUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({})
-                });
-                const tokenData = await res.json() as any;
-                const poToken = tokenData?.poToken || tokenData?.po_token;
-                if (poToken) {
-                    generatedPoToken = poToken;
-                    payload.serviceIntegrityDimensions = { poToken };
-                }
-            } catch (err) {
-                console.warn('Failed to fetch PO Token from provider:', (err as Error).message);
+            const pot = await getPoToken(options.potProviderUrl, visitorData, dispatcher)
+            if (pot) {
+                generatedPoToken = pot.poToken
+                payload.serviceIntegrityDimensions = { poToken: pot.poToken }
+                // The PO token is bound to the visitor data returned by the provider,
+                // so the request must identify with the same visitor data.
+                if (pot.visitorData) clientVisitorData = pot.visitorData
             }
+        }
+        if (clientVisitorData) {
+            clientPayload.visitorData = clientVisitorData
         }
 
         const apiHeaders: Record<string, string> = {
@@ -278,8 +334,8 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
             'X-Youtube-Client-Version': clientVersion,
             'Origin': clientConfig.origin
         }
-        if (visitorData) {
-            apiHeaders['X-Goog-Visitor-Id'] = visitorData
+        if (clientVisitorData) {
+            apiHeaders['X-Goog-Visitor-Id'] = clientVisitorData
         }
         if (clientKey !== 'visionos') {
             if (apiCookieString) {
@@ -331,8 +387,11 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
             const adaptiveFmts = resJson.streamingData?.adaptiveFormats || []
             if (adaptiveFmts.length > 0) {
                 const usableAdaptive = adaptiveFmts.filter((f: any) => f.url || f.signatureCipher || f.cipher)
-                if (usableAdaptive.length === 0) {
-                    lastError = new Error(`YouTube Error (${clientKey}): Soft-block detected (HD/adaptive formats missing URLs)`)
+                // Some clients (e.g. web/mweb during YouTube's SABR-only experiment) return
+                // adaptive formats without any URL or cipher. Treat a mostly-unusable list as
+                // a soft-block and fall back to another client instead of exposing dead formats.
+                if (usableAdaptive.length * 2 < adaptiveFmts.length) {
+                    lastError = new Error(`YouTube Error (${clientKey}): Soft-block detected (${usableAdaptive.length}/${adaptiveFmts.length} adaptive formats usable; SABR-only response)`)
                     continue
                 }
             }

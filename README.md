@@ -126,7 +126,11 @@ stream.pipe(fs.createWriteStream('video.mp4'));
 | Option | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `proxy` | `string` | `undefined` | Proxy URL (HTTP/HTTPS). |
-| `cookies` | `string \| RawCookie` | `undefined` | Path to Netscape cookie file or `RawCookie` instance. |
+| `cookies` | `string \| RawCookie` | `undefined` | Path to Netscape cookie file or `RawCookie` instance. Cookie files are updated in place with rotations/deletions from YouTube's `Set-Cookie` responses. |
+| `client` | `string` | `undefined` | Force a specific InnerTube client (`visionos`, `mweb`, `web`). Defaults to trying them in that order. |
+| `potProviderUrl` | `string` | `undefined` | bgutil-compatible PO token provider. Accepts either a base URL (e.g. `http://127.0.0.1:4416`) or the full `/get_pot` endpoint. Tokens are bound to the visitor data used for the request and cached in memory. |
+
+> **Note on PO tokens:** clients other than `visionos` may require a PO token for their stream URLs to be accepted by the CDN. With a provider configured, expect ~1 provider request per `getVideoInfo` call when an authenticated client is used.
 
 ---
 
