@@ -72,6 +72,9 @@ export async function downloadVideoParallel(
         if (retryCount >= RETRY_LIMIT) {
           throw new Error(`Chunk ${chunkIndex} failed after ${RETRY_LIMIT} retries: ${error.message}`)
         }
+        // Back off between attempts: the CDN drops connections when many chunks are
+        // requested at once, and retrying immediately just reproduces the failure.
+        await new Promise((resolve) => setTimeout(resolve, 300 * 2 ** retryCount))
         return downloadAndWriteChunk(start, end, chunkIndex, retryCount + 1)
       }
     }
@@ -135,6 +138,19 @@ export async function downloadVideoParallel(
       console.error(`[Downloader] Failed to process ${url}:`, error.message)
       if (fileHandle) {
         await fileHandle.close().catch(() => {})
+      }
+      // One dropped connection should not cost the whole file: retry it over a single
+      // connection (the chunked path uses many sockets, which the CDN can reset).
+      try {
+        console.error('[Downloader] Falling back to a single connection...')
+        const response = await fetch(url, { headers: baseHeaders, dispatcher, signal } as any)
+        if (!response.ok || !response.body) {
+          throw new Error(`Fallback HTTP Error: ${response.status}`)
+        }
+        await pipeline(Readable.fromWeb(response.body as any), createWriteStream(filePath), { signal })
+        return filePath
+      } catch (fallbackError: any) {
+        console.error(`[Downloader] Fallback failed: ${fallbackError.message}`)
       }
       await fs.unlink(filePath).catch(() => {})
       return null

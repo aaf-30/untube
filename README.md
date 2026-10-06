@@ -127,10 +127,10 @@ stream.pipe(fs.createWriteStream('video.mp4'));
 | :--- | :--- | :--- | :--- |
 | `proxy` | `string` | `undefined` | Proxy URL (HTTP/HTTPS). |
 | `cookies` | `string \| RawCookie` | `undefined` | Path to Netscape cookie file or `RawCookie` instance. Cookie files are updated in place with rotations/deletions from YouTube's `Set-Cookie` responses. |
-| `client` | `string` | `undefined` | Force a specific InnerTube client (`visionos`, `mweb`, `web`). Defaults to trying them in that order. |
+| `client` | `string` | `undefined` | Force a specific InnerTube client (`visionos`, `mweb`). Defaults to trying them in that order. |
 | `potProviderUrl` | `string` | `undefined` | bgutil-compatible PO token provider. Accepts either a base URL (e.g. `http://127.0.0.1:4416`) or the full `/get_pot` endpoint. Tokens are bound to the visitor data used for the request and cached in memory. |
 
-> **Note on PO tokens:** clients other than `visionos` may require a PO token for their stream URLs to be accepted by the CDN. With a provider configured, expect ~1 provider request per `getVideoInfo` call when an authenticated client is used.
+> **Note on PO tokens:** `mweb` needs a PO token for its stream URLs to be accepted by the CDN; `visionos` works without one. With a provider configured, expect ~1 provider request per `getVideoInfo` call (cached in memory afterwards).
 
 ---
 
@@ -248,6 +248,8 @@ untube('videoId', { cookies: myRawCookie });
 | `thumbnail` | `string` | Highest resolution thumbnail URL. |
 | `formats` | `YouTubeFormat[]` | Array of available formats. |
 | `captions` | `YouTubeCaption[]` | Array of available subtitles. |
+| `logged_in` | `boolean \| null` | YouTube's own view of the session (`ytcfg.LOGGED_IN`); `null` if YouTube did not report it. |
+| `has_auth_cookies` | `boolean` | Whether the supplied cookies were an authenticated session (`SAPISID` family + `LOGIN_INFO`), evaluated before any request is made. **`has_auth_cookies && !logged_in` means the session expired or was rotated** — export the cookies again. |
 
 ### `YouTubeFormat`
 | Property | Type | Description |

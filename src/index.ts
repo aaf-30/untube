@@ -17,8 +17,18 @@ interface CachedPoToken {
     expires: number
 }
 
+/**
+ * yt-dlp's test for an authenticated cookie jar: a SAPISID-family cookie plus LOGIN_INFO.
+ */
+function hasAuthCookiesIn(jar: { getCookiesSync: (url: string) => any[] }, url: string): boolean {
+    const names = new Set(jar.getCookiesSync(url).map((c) => c.key))
+    return ['SAPISID', '__Secure-1PAPISID', '__Secure-3PAPISID'].some((name) => names.has(name)) && names.has('LOGIN_INFO')
+}
+
 const poTokenCache = new Map<string, CachedPoToken>()
 const POT_CACHE_TTL_MS = 6 * 60 * 60 * 1000
+/** Video-ID-bound tokens (see gvsBindToVideoId) add one entry per video, so bound the cache. */
+const POT_CACHE_MAX_ENTRIES = 512
 
 /**
  * bgutil-ytdlp-pot-provider exposes its HTTP API at `/get_pot`.
@@ -88,6 +98,12 @@ async function getPoToken(
 
     const entry: CachedPoToken = { ...fresh, expires: Date.now() + POT_CACHE_TTL_MS }
     poTokenCache.set(cacheKey, entry)
+    // Map preserves insertion order, so this evicts the oldest entry first
+    while (poTokenCache.size > POT_CACHE_MAX_ENTRIES) {
+        const oldest = poTokenCache.keys().next().value
+        if (oldest === undefined) break
+        poTokenCache.delete(oldest)
+    }
     return entry
 }
 
@@ -147,6 +163,14 @@ export interface VideoInfo {
     formats: YouTubeFormat[]
     captions: YouTubeCaption[]
     availability: string
+    /** YouTube's own view of the session that served the request (watch-page ytcfg `LOGGED_IN`). `null` when YouTube did not report it. */
+    logged_in: boolean | null
+    /**
+     * Whether the cookie jar held YouTube auth cookies (`SAPISID` family + `LOGIN_INFO`).
+     * `has_auth_cookies && !logged_in` means YouTube ignored them: the session expired
+     * or was rotated, so export the cookies again.
+     */
+    has_auth_cookies: boolean
     _client?: string
 }
 
@@ -164,14 +188,6 @@ export interface InnerTubeClientConfig {
 }
 
 export const CLIENT_CONFIGS: Record<string, InnerTubeClientConfig> = {
-    web: {
-        name: 'web',
-        clientName: 'WEB',
-        clientVersion: '2.20260708.00.00',
-        clientId: '1',
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        origin: 'https://www.youtube.com'
-    },
     visionos: {
         name: 'visionos',
         clientName: 'VISIONOS',
@@ -197,7 +213,7 @@ export const CLIENT_CONFIGS: Record<string, InnerTubeClientConfig> = {
 export interface GetVideoInfoOptions {
     cookies?: string | RawCookie
     proxy?: string
-    client?: 'visionos' | 'mweb' | 'web' | string
+    client?: 'visionos' | 'mweb' | string
     potProviderUrl?: string
 }
 
@@ -212,6 +228,11 @@ export interface GetVideoInfoOptions {
 async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}): Promise<VideoInfo> {
     const cm = new CookieManager(options.cookies)
     await cm.load()
+    // Snapshot taken *before* any request: YouTube answers an expired session with
+    // Set-Cookie that clears the auth cookies, and those are saved back to the file.
+    // Reading it up front is what makes `has_auth_cookies && !logged_in` mean "expired"
+    // rather than "no cookies were provided".
+    const hasAuthCookies = hasAuthCookiesIn(cm.jar, 'https://www.youtube.com')
 
     const dispatcher = options.proxy ? new ProxyAgent(options.proxy) : undefined
 
@@ -248,6 +269,17 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     const sts = ytcfg.STS
     const visitorData = ytcfg.VISITOR_DATA
 
+    // YouTube's own view of the session, straight from the watch page config.
+    const loggedIn: boolean | null = typeof ytcfg.LOGGED_IN === 'boolean' ? ytcfg.LOGGED_IN : null
+
+    // When YouTube runs the `html5_generate_content_po_token` experiment, the GVS PO token
+    // has to be bound to the video ID instead of the visitor data or the CDN answers 403.
+    // yt-dlp detects the same flag and calls it gvs_bind_to_video_id.
+    const gvsBindToVideoId = Object.values((ytcfg.WEB_PLAYER_CONTEXT_CONFIGS || {}) as Record<string, any>).some((cfg) => {
+        const flags = cfg?.serializedExperimentFlags
+        return typeof flags === 'string' && new URLSearchParams(flags).get('html5_generate_content_po_token') === 'true'
+    })
+
     let initialPlayerResponse: any = {}
     const initialPlayerMatch = pageHtml.match(/ytInitialPlayerResponse\s*=\s*(\{.*?\});/)
     if (initialPlayerMatch) {
@@ -267,9 +299,13 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         }
         candidateClientNames = [options.client]
     } else {
-        // visionos needs no cookies/PO token; mweb unlocks logged-in content;
-        // web is kept as a last resort (may need a PO token and is experiment-prone).
-        candidateClientNames = ['visionos', 'mweb', 'web']
+        // visionos needs no cookies/PO token and returns the full format ladder;
+        // mweb unlocks logged-in content but needs a GVS PO token.
+        // (The `web` and `web_embedded` clients were removed: YouTube forces SABR on
+        // `web` -- it only ever yielded the muxed itag 18 even with a correctly bound
+        // PO token -- and `web_embedded` replies "This video is unavailable" unless the
+        // request carries the embed page's session-bound encrypted context.)
+        candidateClientNames = ['visionos', 'mweb']
     }
 
     let json: any = null
@@ -278,10 +314,6 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     let successfulClient: string = ''
 
     for (const clientKey of candidateClientNames) {
-        if (clientKey === 'web' && !apiCookieString) {
-            continue;
-        }
-
         generatedPoToken = undefined;
         const clientConfig = CLIENT_CONFIGS[clientKey]!
         const clientVersion = (clientKey === 'mweb' && ytcfg.INNERTUBE_CLIENT_VERSION) ? ytcfg.INNERTUBE_CLIENT_VERSION : clientConfig.clientVersion
@@ -314,13 +346,17 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         }
         let clientVisitorData: string | undefined = visitorData
         if (clientKey !== 'visionos' && options.potProviderUrl) {
-            const pot = await getPoToken(options.potProviderUrl, visitorData, dispatcher)
+            // GVS token: appended to each CDN URL as `pot=`. Required by mweb. It is bound
+            // to the visitor data this request identifies as -- or to the video ID when the
+            // experiment above is active.
+            // (A player-context token is a different thing: it goes in
+            //  `serviceIntegrityDimensions`. No remaining client needs one.)
+            const pot = await getPoToken(options.potProviderUrl, gvsBindToVideoId ? videoId : visitorData, dispatcher)
             if (pot) {
                 generatedPoToken = pot.poToken
-                payload.serviceIntegrityDimensions = { poToken: pot.poToken }
-                // The PO token is bound to the visitor data returned by the provider,
-                // so the request must identify with the same visitor data.
-                if (pot.visitorData) clientVisitorData = pot.visitorData
+                // The provider echoes the binding it used, so the request must identify
+                // with the same visitor data. A video-ID binding is not visitor data.
+                if (!gvsBindToVideoId && pot.visitorData) clientVisitorData = pot.visitorData
             }
         }
         if (clientVisitorData) {
@@ -369,7 +405,13 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
 
             const resJson: any = await apiRes.json()
             if (resJson.playabilityStatus && resJson.playabilityStatus.status !== 'OK') {
-                lastError = new Error(`YouTube Error (${clientKey}): ${resJson.playabilityStatus.reason || resJson.playabilityStatus.status}`)
+                const reason = resJson.playabilityStatus.reason || resJson.playabilityStatus.status
+                // A "Sign in..." reason while the jar holds auth cookies means YouTube no
+                // longer accepts that session, which usually means it has expired.
+                const hint = hasAuthCookies && clientKey !== 'visionos' && /sign in/i.test(String(reason))
+                    ? ' -- the provided cookies look authenticated but YouTube rejected them; they have probably expired or been rotated. Re-export them.'
+                    : ''
+                lastError = new Error(`YouTube Error (${clientKey}): ${reason}${hint}`)
                 continue
             }
 
@@ -396,19 +438,23 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
                 }
             }
 
-            // Test CDN URL for 403 Forbidden (Prioritizing itag 140 / m4a audio)
+            // Test CDN URL for 403 Forbidden (Prioritizing itag 140 / m4a audio).
+            // A URL that still carries an `n` challenge is answered with 403 until that
+            // challenge is solved further below, so it cannot be probed meaningfully here.
             const testFormat = fmts.find((f: any) => f.itag === 140 && f.url) || fmts.find((f: any) => f.url)
             if (testFormat) {
                 const testUrlObj = new URL(testFormat.url)
-                if (generatedPoToken) testUrlObj.searchParams.set('pot', generatedPoToken)
-                try {
-                    const headRes = await fetch(testUrlObj.toString(), { method: 'HEAD', dispatcher } as any)
-                    if (headRes.status === 403) {
-                        lastError = new Error(`YouTube Error (${clientKey}): CDN returned 403 Forbidden`)
-                        continue
+                if (!testUrlObj.searchParams.has('n')) {
+                    if (generatedPoToken) testUrlObj.searchParams.set('pot', generatedPoToken)
+                    try {
+                        const headRes = await fetch(testUrlObj.toString(), { method: 'HEAD', dispatcher } as any)
+                        if (headRes.status === 403) {
+                            lastError = new Error(`YouTube Error (${clientKey}): CDN returned 403 Forbidden`)
+                            continue
+                        }
+                    } catch (e) {
+                        // Ignore network errors for HEAD check
                     }
-                } catch (e) {
-                    // Ignore network errors for HEAD check
                 }
             }
 
@@ -518,7 +564,7 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
         }
     }
     
-    // Append PO Token to format URLs if generated
+    // Append the GVS PO Token to format URLs if generated
     if (generatedPoToken) {
         if (json.streamingData?.formats) {
             for (const format of json.streamingData.formats) {
@@ -543,12 +589,18 @@ async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}):
     json.videoDetails = { ...(initialPlayerResponse.videoDetails || {}), ...(json.videoDetails || {}) }
     json.microformat = initialPlayerResponse.microformat || json.microformat
 
-    const result = normalizeYtDlp(json)
-    result._client = successfulClient
+    const result: VideoInfo = {
+        ...normalizeYtDlp(json),
+        _client: successfulClient,
+        logged_in: loggedIn,
+        has_auth_cookies: hasAuthCookies
+    }
     return result
 }
 
-function normalizeYtDlp(json: any): VideoInfo {
+// The session fields are filled in by getVideoInfo, which is where the watch page
+// config and the cookie jar are in scope.
+function normalizeYtDlp(json: any): Omit<VideoInfo, 'logged_in' | 'has_auth_cookies'> {
     const vd = json.videoDetails || {}
     const mf = json.microformat?.playerMicroformatRenderer || {}
     const formats: YouTubeFormat[] = []
