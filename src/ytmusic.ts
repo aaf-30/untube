@@ -1,5 +1,6 @@
 import { fetch, ProxyAgent } from 'undici';
 import CookieManager, { RawCookie } from './cookie-manager.js';
+import { extractVideoId } from './utils.js';
 
 export interface YTMusicSearchResult {
   title: string;
@@ -209,18 +210,6 @@ async function searchYTMusic(query: string, options: SearchYTMusicOptions = {}):
   }
 
   return uniqueResults;
-}
-
-function extractVideoId(input: string): string {
-  if (!input) return input;
-  const match = input.match(/(?:v=|\/v\/|youtu\.be\/|\/embed\/|\/watch\?v=|\/watch\?.*&v=)([^"&?/\s]{11})/);
-  if (match && match[1]) {
-    return match[1];
-  }
-  if (input.length === 11 && !input.includes('/') && !input.includes('.')) {
-    return input;
-  }
-  return input;
 }
 
 export async function getTrackInfo(videoIdOrUrl: string, options: SearchYTMusicOptions = {}): Promise<YTMusicTrackInfo> {

@@ -59,6 +59,10 @@ import untube from 'untube';
 // Basic usage
 const info = await untube.getVideoInfo('dQw4w9WgXcQ');
 
+// A full URL works too — watch links, youtu.be, /shorts/, /embed/, /live/,
+// music.youtube.com, and `list=RD…` radio/mix links (the playing video's ID)
+const fromUrl = await untube.getVideoInfo('https://www.youtube.com/shorts/PBA1M5rNOuk');
+
 console.log('Title:', info.title);
 console.log('Views:', info.view_count);
 console.log('Duration:', info.duration, 'seconds');
@@ -112,7 +116,9 @@ stream.pipe(fs.createWriteStream('video.mp4'));
 
 ## Configuration Options
 
-### `untube(id, options)`
+### `untube(idOrUrl, options)`
+
+`idOrUrl` accepts a video ID or a YouTube URL (watch, `youtu.be`, `/shorts/`, `/embed/`, `/live/`, `music.youtube.com`, or a `list=RD…` mix link).
 | Option | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `format` | `string` | `'highest'` | Quality preset (e.g., `'highestaudio'`, `'1080p'`) or specific `itag`. |
@@ -122,7 +128,7 @@ stream.pipe(fs.createWriteStream('video.mp4'));
 | `cookies` | `string \| RawCookie` | `undefined` | Path to Netscape cookie file or `RawCookie` instance. |
 | `signal` | `AbortSignal` | `undefined` | Signal to abort the download. |
 
-### `untube.getVideoInfo(id, options)`
+### `untube.getVideoInfo(idOrUrl, options)`
 | Option | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `proxy` | `string` | `undefined` | Proxy URL (HTTP/HTTPS). |
@@ -168,6 +174,9 @@ const bestAudio = untube.chooseFormat(info.formats, { quality: 'highestaudio' })
 
 // 4. Sort formats from highest to lowest quality
 const sorted = untube.sortFormats(info.formats);
+
+// 5. Pull a video ID out of any YouTube URL (returns null if there is no single video)
+const id = untube.extractVideoId('https://youtu.be/dQw4w9WgXcQ?si=abc'); // 'dQw4w9WgXcQ'
 ```
 
 ---

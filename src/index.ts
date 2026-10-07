@@ -2,7 +2,7 @@ import CookieManager, { RawCookie } from './cookie-manager.js'
 import jsc from './solver-bundle.js'
 import crypto from 'node:crypto'
 import { fetch, ProxyAgent } from 'undici'
-import { filterFormats, sortFormats, chooseFormat, FilterFunction, FilterString, ChooseFormatQuality, ChooseFormatOptions } from './utils.js'
+import { filterFormats, sortFormats, chooseFormat, extractVideoId, FilterFunction, FilterString, ChooseFormatQuality, ChooseFormatOptions } from './utils.js'
 import { PassThrough, Readable } from 'node:stream'
 import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
@@ -221,11 +221,18 @@ export interface GetVideoInfoOptions {
  * Get YouTube video information along with streaming data (CDN URL)
  * that has been automatically decrypted.
  *
- * @param videoId - YouTube video ID
+ * @param idOrUrl - A YouTube video ID or a video URL
  * @param options - Optional configuration
  * @returns Promise<VideoInfo>
  */
-async function getVideoInfo(videoId: string, options: GetVideoInfoOptions = {}): Promise<VideoInfo> {
+async function getVideoInfo(idOrUrl: string, options: GetVideoInfoOptions = {}): Promise<VideoInfo> {
+    const videoId = extractVideoId(idOrUrl)
+    if (!videoId) {
+        throw new Error(/(?:\/playlist|\blist=)/.test(idOrUrl)
+            ? 'That URL points to a playlist, not to a single video. Pass a video ID or a video URL.'
+            : 'Invalid YouTube video ID or URL.')
+    }
+
     const cm = new CookieManager(options.cookies)
     await cm.load()
     // Snapshot taken *before* any request: YouTube answers an expired session with
@@ -760,16 +767,16 @@ export interface UntubeOptions extends GetVideoInfoOptions {
  * Emits 'info' with VideoInfo and the selected format.
  * Emits 'progress' with download percentage (only available in 'parallel' mode).
  * 
- * @param id - YouTube video ID
+ * @param idOrUrl - A YouTube video ID or a video URL
  * @param options - Options for fetching info and selecting format
  * @returns A PassThrough stream containing the downloaded video/audio data
  */
-function untube(id: string, options: UntubeOptions = {}): PassThrough {
+function untube(idOrUrl: string, options: UntubeOptions = {}): PassThrough {
     const stream = new PassThrough();
 
     (async () => {
         try {
-            const info = await getVideoInfo(id, options);
+            const info = await getVideoInfo(idOrUrl, options);
             const format = chooseFormat(info.formats, {
                 quality: options.format,
                 filter: options.filter
@@ -841,8 +848,9 @@ untube.RawCookie = RawCookie;
 untube.filterFormats = filterFormats;
 untube.sortFormats = sortFormats;
 untube.chooseFormat = chooseFormat;
+untube.extractVideoId = extractVideoId;
 untube.ytmusic = ytmusic;
 untube.getTrackInfo = getTrackInfo;
 
-export { getVideoInfo, RawCookie, filterFormats, sortFormats, chooseFormat, FilterFunction, FilterString, ChooseFormatQuality, ChooseFormatOptions, ytmusic, YTMusicSearchResult, SearchYTMusicOptions, YTMusicTrackInfo, getTrackInfo }
+export { getVideoInfo, RawCookie, filterFormats, sortFormats, chooseFormat, extractVideoId, FilterFunction, FilterString, ChooseFormatQuality, ChooseFormatOptions, ytmusic, YTMusicSearchResult, SearchYTMusicOptions, YTMusicTrackInfo, getTrackInfo }
 export default untube;

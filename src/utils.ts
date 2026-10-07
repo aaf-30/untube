@@ -132,3 +132,48 @@ export function chooseFormat(formats: YouTubeFormat[], options: ChooseFormatOpti
         }
     }
 }
+
+/** YouTube video IDs are exactly 11 characters of `[A-Za-z0-9_-]`. */
+const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+
+/**
+ * Extract a YouTube video ID from a bare ID or from the URL shapes people paste:
+ * watch links, `youtu.be`, `/shorts/…`, `/embed/…`, `/live/…`, `/v/…`,
+ * `music.youtube.com`, and `list=RD…` radio/mix links where the ID of the video
+ * being played is the tail.
+ *
+ * Returns `null` when the input carries no single video — a curated `PL…` playlist,
+ * for instance.
+ *
+ * @param input - A video ID or a YouTube URL.
+ * @returns The 11-character video ID, or `null` if none could be found.
+ */
+export function extractVideoId(input: string): string | null {
+    const value = String(input ?? '').trim();
+    if (!value) return null;
+    if (VIDEO_ID_RE.test(value)) return value;
+
+    let url: URL;
+    try {
+        url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value.replace(/^\/+/, '')}`);
+    } catch {
+        return null;
+    }
+
+    const v = url.searchParams.get('v');
+    if (v && VIDEO_ID_RE.test(v)) return v;
+
+    // youtu.be/<id>, /shorts/<id>, /embed/<id>, /live/<id>, /v/<id>. Path words such as
+    // "watch" or "playlist" fail the ID check, so they cannot leak through as an ID.
+    const segments = url.pathname.split('/').filter(Boolean);
+    const lastSegment = segments[segments.length - 1];
+    if (lastSegment && VIDEO_ID_RE.test(lastSegment)) return lastSegment;
+
+    // `list=RD<id>` is a radio/mix and the tail is the video being played. Curated
+    // playlists (PL…, OLAK5uy_…, …) leave more than 11 characters after the prefix and
+    // are rejected by this pattern.
+    const mix = url.searchParams.get('list')?.match(/^RD([A-Za-z0-9_-]{11})$/);
+    if (mix && mix[1]) return mix[1];
+
+    return null;
+}
