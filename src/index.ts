@@ -8,6 +8,7 @@ import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import { downloadVideoParallel } from './downloader.js'
 import { ytmusic, YTMusicSearchResult, SearchYTMusicOptions, YTMusicTrackInfo, getTrackInfo } from './ytmusic.js'
+import { mintLocalPoToken, closeMinter } from './pot/local.js'
 
 const globalPreprocessedPlayerCache = new Map<string, any>()
 
@@ -97,6 +98,11 @@ async function getPoToken(
     if (!fresh) return null
 
     const entry: CachedPoToken = { ...fresh, expires: Date.now() + POT_CACHE_TTL_MS }
+    cachePoToken(cacheKey, entry)
+    return entry
+}
+
+function cachePoToken(cacheKey: string, entry: CachedPoToken): void {
     poTokenCache.set(cacheKey, entry)
     // Map preserves insertion order, so this evicts the oldest entry first
     while (poTokenCache.size > POT_CACHE_MAX_ENTRIES) {
@@ -104,7 +110,26 @@ async function getPoToken(
         if (oldest === undefined) break
         poTokenCache.delete(oldest)
     }
-    return entry
+}
+
+/**
+ * Mint a PO token in-process (see `./pot/local.ts`) when no external provider is configured.
+ * Returns null instead of throwing: a missing token only means some clients' URLs will 403,
+ * which is how the package behaved before a provider was configured at all.
+ */
+async function getLocalPoToken(contentBinding: string): Promise<string | null> {
+    const cacheKey = `local|${contentBinding}`
+    const cached = poTokenCache.get(cacheKey)
+    if (cached && cached.expires > Date.now()) return cached.poToken
+
+    try {
+        const poToken = await mintLocalPoToken(contentBinding)
+        cachePoToken(cacheKey, { poToken, expires: Date.now() + POT_CACHE_TTL_MS })
+        return poToken
+    } catch (err) {
+        console.warn('Failed to mint a PO token locally; continuing without one:', (err as Error).message)
+        return null
+    }
 }
 
 export interface YouTubeFormat {
@@ -352,18 +377,23 @@ async function getVideoInfo(idOrUrl: string, options: GetVideoInfoOptions = {}):
             }
         }
         let clientVisitorData: string | undefined = visitorData
-        if (clientKey !== 'visionos' && options.potProviderUrl) {
+        if (clientKey !== 'visionos') {
             // GVS token: appended to each CDN URL as `pot=`. Required by mweb. It is bound
             // to the visitor data this request identifies as -- or to the video ID when the
             // experiment above is active.
             // (A player-context token is a different thing: it goes in
             //  `serviceIntegrityDimensions`. No remaining client needs one.)
-            const pot = await getPoToken(options.potProviderUrl, gvsBindToVideoId ? videoId : visitorData, dispatcher)
-            if (pot) {
-                generatedPoToken = pot.poToken
-                // The provider echoes the binding it used, so the request must identify
-                // with the same visitor data. A video-ID binding is not visitor data.
-                if (!gvsBindToVideoId && pot.visitorData) clientVisitorData = pot.visitorData
+            const binding = gvsBindToVideoId ? videoId : visitorData
+            if (options.potProviderUrl) {
+                const pot = await getPoToken(options.potProviderUrl, binding, dispatcher)
+                if (pot) {
+                    generatedPoToken = pot.poToken
+                    // The provider echoes the binding it used, so the request must identify
+                    // with the same visitor data. A video-ID binding is not visitor data.
+                    if (!gvsBindToVideoId && pot.visitorData) clientVisitorData = pot.visitorData
+                }
+            } else if (binding) {
+                generatedPoToken = await getLocalPoToken(binding) ?? undefined
             }
         }
         if (clientVisitorData) {
@@ -849,8 +879,9 @@ untube.filterFormats = filterFormats;
 untube.sortFormats = sortFormats;
 untube.chooseFormat = chooseFormat;
 untube.extractVideoId = extractVideoId;
+untube.closeMinter = closeMinter;
 untube.ytmusic = ytmusic;
 untube.getTrackInfo = getTrackInfo;
 
-export { getVideoInfo, RawCookie, filterFormats, sortFormats, chooseFormat, extractVideoId, FilterFunction, FilterString, ChooseFormatQuality, ChooseFormatOptions, ytmusic, YTMusicSearchResult, SearchYTMusicOptions, YTMusicTrackInfo, getTrackInfo }
+export { getVideoInfo, RawCookie, filterFormats, sortFormats, chooseFormat, extractVideoId, closeMinter, FilterFunction, FilterString, ChooseFormatQuality, ChooseFormatOptions, ytmusic, YTMusicSearchResult, SearchYTMusicOptions, YTMusicTrackInfo, getTrackInfo }
 export default untube;

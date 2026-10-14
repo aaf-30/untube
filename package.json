@@ -12,7 +12,7 @@
     "innertube",
     "youtube-api"
   ],
-  "license": "Unlicense",
+  "license": "GPL-3.0-or-later",
   "author": "Achmad Al Fandi",
   "type": "module",
   "main": "dist/index.js",
@@ -37,7 +37,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "assets"
   ],
   "scripts": {
     "build": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc",

@@ -6,3 +6,4 @@ dev-test/
 cookies.txt
 test*.js
 .env
+potoken/

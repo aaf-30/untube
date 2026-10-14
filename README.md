@@ -134,9 +134,9 @@ stream.pipe(fs.createWriteStream('video.mp4'));
 | `proxy` | `string` | `undefined` | Proxy URL (HTTP/HTTPS). |
 | `cookies` | `string \| RawCookie` | `undefined` | Path to Netscape cookie file or `RawCookie` instance. Cookie files are updated in place with rotations/deletions from YouTube's `Set-Cookie` responses. |
 | `client` | `string` | `undefined` | Force a specific InnerTube client (`visionos`, `mweb`). Defaults to trying them in that order. |
-| `potProviderUrl` | `string` | `undefined` | bgutil-compatible PO token provider. Accepts either a base URL (e.g. `http://127.0.0.1:4416`) or the full `/get_pot` endpoint. Tokens are bound to the visitor data used for the request and cached in memory. |
+| `potProviderUrl` | `string` | `undefined` | Optional bgutil-compatible PO token provider. Accepts either a base URL (e.g. `http://127.0.0.1:4416`) or the full `/get_pot` endpoint. **When omitted, tokens are minted in-process** and cached in memory. |
 
-> **Note on PO tokens:** `mweb` needs a PO token for its stream URLs to be accepted by the CDN; `visionos` works without one. With a provider configured, expect ~1 provider request per `getVideoInfo` call (cached in memory afterwards).
+> **Note on PO tokens:** `mweb` needs a PO token for its stream URLs to be accepted by the CDN; `visionos` works without one, so a plain `getVideoInfo(id)` never boots the minter. Token minting runs in-process by default: the first call that needs one costs a few seconds (it boots a sandbox and evaluates YouTube's BotGuard interpreter), and later calls reuse the cached token or mint in well under a second. `closeMinter()` releases the session if you want the process to exit promptly.
 
 ---
 
@@ -292,6 +292,14 @@ This project is created for educational purposes only. Users are responsible for
 
 ## License
 
-This project is licensed under the [Unlicense](LICENSE) (Public Domain).
+This project is licensed under the [GPL-3.0-or-later](LICENSE).
 
-**Note:** While the core codebase is released under the Unlicense, this project relies on open-source dependencies (e.g., `tough-cookie`, `meriyah`, `astring`, etc.) which have their own respective licenses (such as MIT, BSD, etc.). Please ensure compliance with the licenses of these dependencies if you intend to distribute or use this module in a commercial product.
+It was Unlicense (public domain) up to and including 3.1.0. PO token minting is implemented
+in-process from 4.0.0 on, which brings in code that cannot be relicensed permissively:
+
+- `src/pot/**` — ported from the author's `ytapi` experiment, itself derived from YMusicV4.
+- `assets/vendor/*.js` — vendored from [YMusicV4](https://github.com/ymusic-io/YMusicV4), which is
+  GPL-3.0. Shipped read-only.
+
+If you need a permissive license, stay on 3.1.0 and keep minting tokens through an external
+provider via `potProviderUrl`.
