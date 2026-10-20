@@ -21,7 +21,9 @@ A lightweight, extremely fast YouTube video downloader and metadata scraper for 
 - [YouTube Music Search](#youtube-music-search)
 - [Cookie Handling](#cookie-handling)
 - [API Reference](#api-reference)
-- [Disclaimer & License](#disclaimer--license)
+- [Development](#development)
+- [Disclaimer](#disclaimer)
+- [License](#license)
 
 ---
 
@@ -285,6 +287,19 @@ untube('videoId', { cookies: myRawCookie });
 | `webpage_url` | `string` | Full YouTube Music webpage URL. |
 
 ---
+
+## Development
+
+```bash
+npm install   # installs dependencies and runs the build
+npm run build # regenerates the sandbox assets, then compiles with tsc
+```
+
+The sandbox scripts in `assets/` are inlined into `src/pot/sandbox/assets.generated.ts` at build
+time. That file is generated and not committed, so after editing `assets/page/*.js` or
+`assets/vendor/*.js`, run `npm run build` again to embed the new source in `dist/`.
+
+There is no automated test suite; `dev-test/` holds scratch scripts used during development.
 
 ## Disclaimer
 

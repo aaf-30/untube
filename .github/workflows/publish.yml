@@ -21,7 +21,13 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to NPM
+        run: npm publish --provenance --access public --ignore-scripts --registry=https://registry.npmjs.org/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -29,7 +35,4 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish to NPM
-        run: npm publish --provenance --access public --registry=https://registry.npmjs.org/
 
