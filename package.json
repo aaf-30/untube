@@ -1,6 +1,6 @@
 {
   "name": "untube",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "Lightweight YouTube video metadata & streaming URL extractor for Node.js. High reliability ported from yt-dlp",
   "keywords": [
     "youtube",
@@ -41,10 +41,9 @@
     "assets"
   ],
   "scripts": {
-    "build": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc",
+    "build": "node scripts/generate-assets.js && node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc",
     "update-solver": "node scripts/update-solver.js",
-    "prepare": "npm run build",
-    "test": "node --test test/*.test.js"
+    "prepare": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
