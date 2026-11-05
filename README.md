@@ -138,7 +138,9 @@ stream.pipe(fs.createWriteStream('video.mp4'));
 | `client` | `string` | `undefined` | Force a specific InnerTube client (`visionos`, `mweb`). Defaults to trying them in that order. |
 | `potProviderUrl` | `string` | `undefined` | Optional bgutil-compatible PO token provider. Accepts either a base URL (e.g. `http://127.0.0.1:4416`) or the full `/get_pot` endpoint. **When omitted, tokens are minted in-process** and cached in memory. |
 
-> **Note on PO tokens:** `mweb` needs a PO token for its stream URLs to be accepted by the CDN; `visionos` works without one, so a plain `getVideoInfo(id)` never boots the minter. Token minting runs in-process by default: the first call that needs one costs a few seconds (it boots a sandbox and evaluates YouTube's BotGuard interpreter), and later calls reuse the cached token or mint in well under a second. `closeMinter()` releases the session if you want the process to exit promptly.
+> **Note on PO tokens:** `mweb` needs a PO token for its stream URLs to be accepted by the CDN; `visionos` works without one, so a plain `getVideoInfo(id)` never boots the minter. Token minting runs in-process by default: the first call that needs one costs a few seconds (it boots a sandbox and evaluates YouTube's BotGuard interpreter), and later calls reuse the cached token or mint in well under a second. `closeMinter()` releases all local minter sessions if you want the process to exit promptly. Local minting uses the configured `proxy`; sessions and token caches are separated by proxy URL. Integrity tokens refresh before their reported expiry, and cached PO tokens never outlive that expiry.
+
+`getVideoInfo()` probes a final media URL after signature solving and token attachment. If the CDN returns 403 for `mweb`, it discards cached tokens for that proxy, resets the local minter, and retrieves fresh metadata once. A repeated 403 fails or falls back to another available client. Minting failures on `mweb` now reject the request instead of returning URLs without a PO token. Network errors during the probe remain best-effort.
 
 ---
 

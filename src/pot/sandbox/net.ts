@@ -1,4 +1,5 @@
 import { ORIGIN, UA } from "../ua.js";
+import { fetch, Headers, type Dispatcher, type RequestInit } from "undici";
 
 /**
  * The host half of `assets/page/net.js`: the only place in this project that opens a socket.
@@ -183,6 +184,7 @@ export class CookieJar {
 // ---------------------------------------------------------------------------
 
 export interface HttpOptions {
+  dispatcher?: Dispatcher;
   /** Observe the process's traffic. Retries and redirects are visible here too. */
   interceptors?: HttpInterceptor[];
   log?: (level: "debug" | "info" | "warn" | "error", message: string) => void;
@@ -201,11 +203,13 @@ function stripHeaders(headers: readonly [string, string][], names: readonly stri
 
 export class SandboxHttp {
   readonly jar = new CookieJar();
+  readonly dispatcher: Dispatcher | undefined;
 
   private readonly interceptors: HttpInterceptor[];
   private readonly log: (level: "debug" | "info" | "warn" | "error", message: string) => void;
 
   constructor(opts: HttpOptions = {}) {
+    this.dispatcher = opts.dispatcher;
     this.interceptors = opts.interceptors ? [...opts.interceptors] : [];
     this.log = opts.log ?? (() => {});
   }
@@ -275,12 +279,13 @@ export class SandboxHttp {
       method: req.method,
       headers,
       redirect: "follow",
+      dispatcher: this.dispatcher,
     };
     if (req.bodyB64 !== null && req.bodyB64 !== "") {
       init.body = Buffer.from(req.bodyB64, "base64");
     }
 
-    let res: Response;
+    let res: Awaited<ReturnType<typeof fetch>>;
     try {
       res = await fetch(url, init);
     } catch (e) {

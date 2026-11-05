@@ -9,21 +9,25 @@
  * YMusicV4 (GPL-3.0) and are shipped read-only, which is why this package is GPL-3.0-or-later too.
  *
  * Booting is expensive — a ~2.6 MB `base.js` plus the interpreter, a few seconds — so the session
- * is created once per process and reused. Call `closeMinter()` to release it.
+ * is created once per proxy and reused. Call `closeMinter()` to release all sessions.
  */
 import { YtSession } from './session.js'
 
-/** One session per process. A failed boot must not poison later calls, hence the catch. */
-let sessionPromise: Promise<YtSession> | null = null
+/** Keep direct and proxied attestation sessions separate, including concurrent requests. */
+const sessions = new Map<string, Promise<YtSession>>()
 
-function getSession(): Promise<YtSession> {
-  if (!sessionPromise) {
-    sessionPromise = YtSession.create()
-    sessionPromise.catch(() => {
-      sessionPromise = null
+function getSession(proxy?: string): Promise<YtSession> {
+  const key = proxy || ''
+  let pending = sessions.get(key)
+  if (!pending) {
+    pending = YtSession.create({ proxy })
+    sessions.set(key, pending)
+    const created = pending
+    void pending.catch(() => {
+      if (sessions.get(key) === created) sessions.delete(key)
     })
   }
-  return sessionPromise
+  return pending
 }
 
 /**
@@ -34,17 +38,29 @@ function getSession(): Promise<YtSession> {
  *   CDN URL: the minter hands back standard base64, which YouTube rejects (403) unless `+` and `/`
  *   are swapped for `-` and `_`.
  */
-export async function mintLocalPoToken(binding: string): Promise<string> {
-  const session = await getSession()
-  const token = await session.player.poToken(binding)
-  return token.replace(/\+/g, '-').replace(/\//g, '_')
+export async function mintLocalPoToken(binding: string, proxy?: string): Promise<string> {
+  return (await mintLocalPoTokenWithExpiry(binding, proxy)).poToken
 }
 
-/** Release the shared session (BotGuard interpreter and sandbox). */
+export async function mintLocalPoTokenWithExpiry(binding: string, proxy?: string): Promise<{ poToken: string; expires: number }> {
+  const session = await getSession(proxy)
+  const result = await session.player.poTokenWithExpiry(binding)
+  return { ...result, poToken: result.poToken.replace(/\+/g, '-').replace(/\//g, '_') }
+}
+
+/** Release every shared session (BotGuard interpreter, sandbox and proxy connections). */
 export function closeMinter(): void {
-  const pending = sessionPromise
-  sessionPromise = null
-  if (pending) {
+  const pendingSessions = [...sessions.values()]
+  sessions.clear()
+  for (const pending of pendingSessions) {
     void pending.then((session) => session.close()).catch(() => {})
   }
+}
+
+/** Discard only the session on the rejected network route. */
+export function resetLocalMinter(proxy?: string): void {
+  const key = proxy || ''
+  const pending = sessions.get(key)
+  sessions.delete(key)
+  if (pending) void pending.then((session) => session.close()).catch(() => {})
 }

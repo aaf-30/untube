@@ -1,4 +1,5 @@
 import type { Sandbox } from "../sandbox/context.js";
+import { fetch } from "undici";
 import type { SandboxHttp } from "../sandbox/net.js";
 import { ORIGIN, UA } from "../ua.js";
 import type { BgChallenge } from "./playerConfig.js";
@@ -40,6 +41,7 @@ export interface MinterDiagnostics {
 export interface ContentPoMinter {
   mint(videoId: string): Promise<string>;
   readonly diagnostics: MinterDiagnostics;
+  readonly expiresAt: number;
 }
 
 type SandboxFn = (...args: unknown[]) => unknown;
@@ -64,7 +66,7 @@ async function fetchText(http: SandboxHttp, url: string): Promise<string> {
   return Buffer.from(res.bodyB64, "base64").toString("utf8");
 }
 
-async function waaGenerateIt(botguardResponse: string): Promise<{ status: number; json: unknown }> {
+async function waaGenerateIt(http: SandboxHttp, botguardResponse: string): Promise<{ status: number; json: unknown }> {
   const res = await fetch(GIT_URL, {
     method: "POST",
     headers: {
@@ -78,6 +80,7 @@ async function waaGenerateIt(botguardResponse: string): Promise<{ status: number
     },
     body: JSON.stringify([REQUEST_KEY, botguardResponse]),
     signal: AbortSignal.timeout(30_000),
+    dispatcher: http.dispatcher,
   });
   const text = await res.text();
   try {
@@ -146,7 +149,7 @@ export async function createMinter(
   const extra = sandbox.run<unknown[]>("[[], []]");
   const fns5 = sandbox.run<unknown[]>("[0,0,0,0,0].map(function(){ return function(){}; })");
 
-  resetYtAccessCounts();
+  resetYtAccessCounts(sandbox);
 
   let ret = (vmA as SandboxFn).call(vm, program, setup, true, undefined, nop, extra, undefined, false, fns5);
   if (ret && typeof (ret as Promise<unknown>).then === "function") {
@@ -182,9 +185,9 @@ export async function createMinter(
   });
 
   const snapshotLength = typeof snapshot === "string" ? snapshot.length : 0;
-  const gets = ytWindowGets();
-  const eventGets = ytEventIdGets();
-  freezeYtAccessCounts();
+  const gets = ytWindowGets(sandbox);
+  const eventGets = ytEventIdGets(sandbox);
+  freezeYtAccessCounts(sandbox);
 
   if (gets === 0) {
     throw new Error(
@@ -203,10 +206,16 @@ export async function createMinter(
     );
   }
 
-  const git = await waaGenerateIt(String(snapshot));
+  const git = await waaGenerateIt(http, String(snapshot));
   const arr = Array.isArray(git.json) ? (git.json as unknown[]) : [];
   const integrityToken = arr[0];
-  if (typeof integrityToken !== "string" || !integrityToken) {
+  // GenerateIT returns [token, estimatedTtlSecs, mintRefreshThreshold, ...].
+  // Response layout: https://github.com/LuanRT/BgUtils#retrieving-integrity-token
+  // Refresh slightly early; older responses without a TTL use a conservative one-hour limit.
+  const ttlSeconds = typeof arr[1] === "number" && Number.isFinite(arr[1]) && arr[1] > 0
+    ? arr[1] : 3600;
+  const expiresAt = Date.now() + Math.max(1, ttlSeconds - Math.min(60, ttlSeconds * 0.1)) * 1000;
+  if (git.status < 200 || git.status >= 300 || typeof integrityToken !== "string" || !integrityToken) {
     throw new Error("untube: GenerateIT returned no integrity token (HTTP " + git.status + ")");
   }
 
@@ -241,6 +250,7 @@ export async function createMinter(
 
   return {
     diagnostics,
+    expiresAt,
     async mint(videoId: string): Promise<string> {
       const token = await sandbox.run<unknown>(
         `(function () {

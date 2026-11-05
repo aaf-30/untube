@@ -10,27 +10,24 @@ import type { Sandbox } from "../sandbox/context.js";
  * counted somewhere — so they are counted here.
  */
 
-let eventIdGets = 0;
-let ytGets = 0;
-let counting = true;
+interface AccessCounts { eventIdGets: number; ytGets: number; counting: boolean }
+const accessCounts = new WeakMap<Sandbox, AccessCounts>();
 
-export function ytWindowGets(): number {
-  return ytGets;
+export function ytWindowGets(sandbox: Sandbox): number {
+  return accessCounts.get(sandbox)?.ytGets ?? 0;
 }
 
-export function ytEventIdGets(): number {
-  return eventIdGets;
+export function ytEventIdGets(sandbox: Sandbox): number {
+  return accessCounts.get(sandbox)?.eventIdGets ?? 0;
 }
 
-/** Stop counting once the PO snapshot is done: base.js reads EVENT_ID again later, legitimately. */
-export function freezeYtAccessCounts(): void {
-  counting = false;
+export function freezeYtAccessCounts(sandbox: Sandbox): void {
+  const counts = accessCounts.get(sandbox);
+  if (counts) counts.counting = false;
 }
 
-export function resetYtAccessCounts(): void {
-  eventIdGets = 0;
-  ytGets = 0;
-  counting = true;
+export function resetYtAccessCounts(sandbox: Sandbox): void {
+  accessCounts.set(sandbox, { eventIdGets: 0, ytGets: 0, counting: true });
 }
 
 export function installYtcfg(sandbox: Sandbox, data: Record<string, unknown>): void {
@@ -53,16 +50,17 @@ export function installYtcfg(sandbox: Sandbox, data: Record<string, unknown>): v
   g["ytcfg"] = cfg;
   g["yt"] = { config_: data_ };
 
-  resetYtAccessCounts();
+  resetYtAccessCounts(sandbox);
 
   let held = data_["EVENT_ID"];
   Object.defineProperty(data_, "EVENT_ID", {
     configurable: true,
     enumerable: true,
     get: () => {
-      if (counting) {
-        eventIdGets++;
-        ytGets++;
+      const counts = accessCounts.get(sandbox);
+      if (counts?.counting) {
+        counts.eventIdGets++;
+        counts.ytGets++;
       }
       return held;
     },

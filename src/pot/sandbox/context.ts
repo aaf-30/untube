@@ -1,7 +1,7 @@
 import vm from "node:vm";
 
 import type { HttpRequestDescriptor, HttpResponseDescriptor, SandboxHttp } from "./net.js";
-import { clearSandboxTimers, installNatives } from "./natives.js";
+import { installNatives } from "./natives.js";
 
 /**
  * A `vm` context shaped for running YouTube's `base.js`.
@@ -39,7 +39,7 @@ export function createSandbox(opts: SandboxOptions): Sandbox {
     codeGeneration: { strings: true, wasm: false },
   });
 
-  installNatives(context, resolveTimeZone());
+  const clearTimers = installNatives(context, resolveTimeZone());
 
   const g = vm.runInContext("globalThis", context) as Record<string, unknown>;
   // Returning a host Promise is fine: `await` adopts a cross-realm thenable, so the page-side
@@ -56,7 +56,7 @@ export function createSandbox(opts: SandboxOptions): Sandbox {
       return vm.runInContext("globalThis", context) as T;
     },
     dispose(): void {
-      clearSandboxTimers();
+      clearTimers();
     },
   };
 }

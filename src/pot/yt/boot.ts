@@ -133,19 +133,33 @@ export class YtPlayer {
   }
 
   private minter: ContentPoMinter | null = null;
+  private minterPromise: Promise<ContentPoMinter> | null = null;
 
   /**
-   * A content PO token for [videoId], minted once per process.
+   * A content PO token for [videoId], using a shared minter until its integrity token expires.
    *
    * The BotGuard interpreter is eval'd into the same sandbox the player runs in — they share the
    * `ytcfg` page state the snapshot is supposed to read — but minting is independent of playback,
    * so this is built on first use rather than during boot.
    */
   async poToken(videoId: string): Promise<string> {
-    if (!this.minter) {
-      this.minter = await createMinter(this.sandbox, this.http, this.boot.config.bgChallenge, this.boot.config.ytcfg);
+    return (await this.poTokenWithExpiry(videoId)).poToken;
+  }
+
+  async poTokenWithExpiry(videoId: string): Promise<{ poToken: string; expires: number }> {
+    if (!this.minter || this.minter.expiresAt <= Date.now()) {
+      if (!this.minterPromise) {
+        this.minterPromise = createMinter(this.sandbox, this.http, this.boot.config.bgChallenge, this.boot.config.ytcfg);
+      }
+      const pending = this.minterPromise;
+      try {
+        this.minter = await pending;
+      } finally {
+        if (this.minterPromise === pending) this.minterPromise = null;
+      }
     }
-    return this.minter.mint(videoId);
+    const minter = this.minter;
+    return { poToken: await minter.mint(videoId), expires: minter.expiresAt };
   }
 }
 

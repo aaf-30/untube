@@ -2,6 +2,7 @@ import { createSandbox, type Sandbox } from "./sandbox/context.js";
 import { installEnvironment } from "./sandbox/env.js";
 import { SandboxHttp } from "./sandbox/net.js";
 import { YtPlayer } from "./yt/boot.js";
+import { ProxyAgent } from "undici";
 
 /**
  * One long-lived YouTube session: a sandbox, a booted player, and the identity they share.
@@ -11,6 +12,7 @@ import { YtPlayer } from "./yt/boot.js";
  */
 
 export interface SessionOptions {
+  proxy?: string;
   log?: (level: "debug" | "info" | "warn" | "error", message: string) => void;
 }
 
@@ -43,18 +45,27 @@ export class YtSession {
     readonly sandbox: Sandbox,
     readonly http: SandboxHttp,
     readonly player: YtPlayer,
+    private readonly dispatcher?: ProxyAgent,
   ) {}
 
   static async create(opts: SessionOptions = {}): Promise<YtSession> {
     const log = opts.log ?? (() => {});
-    const http = new SandboxHttp({ log });
+    const dispatcher = opts.proxy ? new ProxyAgent(opts.proxy) : undefined;
+    const http = new SandboxHttp({ log, dispatcher });
     const sandbox = createSandbox({ http });
-    installEnvironment(sandbox);
-    const player = await YtPlayer.create(sandbox, http);
-    return new YtSession(sandbox, http, player);
+    try {
+      installEnvironment(sandbox);
+      const player = await YtPlayer.create(sandbox, http);
+      return new YtSession(sandbox, http, player, dispatcher);
+    } catch (error) {
+      sandbox.dispose();
+      await dispatcher?.close().catch(() => {});
+      throw error;
+    }
   }
 
   close(): void {
     this.sandbox.dispose();
+    void this.dispatcher?.close().catch(() => {});
   }
 }

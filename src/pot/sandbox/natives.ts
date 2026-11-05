@@ -13,8 +13,6 @@ import vm from "node:vm";
 /** Sandbox functions that must report as V8-native through `Function.prototype.toString`. */
 const nativeNames = new WeakMap<object, string>();
 
-const liveTimers = new Set<NodeJS.Timeout>();
-
 export type SandboxLog = (level: "debug" | "info" | "warn" | "error", args: unknown[]) => void;
 
 let logSink: SandboxLog = () => {};
@@ -34,12 +32,12 @@ function formatArg(a: unknown): string {
   }
 }
 
-export function clearSandboxTimers(): void {
+function clearSandboxTimers(liveTimers: Set<NodeJS.Timeout>): void {
   for (const t of liveTimers) clearTimeout(t);
   liveTimers.clear();
 }
 
-function hostTimeout(fn: unknown, ms: unknown, args: unknown[]): number {
+function hostTimeout(liveTimers: Set<NodeJS.Timeout>, fn: unknown, ms: unknown, args: unknown[]): number {
   if (typeof fn !== "function") throw new TypeError("setTimeout: callback is not a function");
   const delay = typeof ms === "number" && Number.isFinite(ms) ? Math.max(0, ms) : 0;
   const handle = setTimeout(() => {
@@ -56,7 +54,8 @@ function hostTimeout(fn: unknown, ms: unknown, args: unknown[]): number {
   return handle as unknown as number;
 }
 
-export function installNatives(ctx: vm.Context, timeZone: string): void {
+export function installNatives(ctx: vm.Context, timeZone: string): () => void {
+  const liveTimers = new Set<NodeJS.Timeout>();
   const g = vm.runInContext("globalThis", ctx) as Record<string, unknown>;
 
   const nativeFn = (name: unknown, impl?: unknown): unknown => {
@@ -71,7 +70,7 @@ export function installNatives(ctx: vm.Context, timeZone: string): void {
   // is what a modern desktop Chrome advertises; the value only steers codec selection.
   g["__mseAvcMaxLevel"] = () => 52;
 
-  g["setTimeout"] = (fn: unknown, ms?: unknown, ...args: unknown[]) => hostTimeout(fn, ms, args);
+  g["setTimeout"] = (fn: unknown, ms?: unknown, ...args: unknown[]) => hostTimeout(liveTimers, fn, ms, args);
   g["clearTimeout"] = (h: unknown) => {
     if (h !== undefined && h !== null) {
       clearTimeout(h as NodeJS.Timeout);
@@ -122,6 +121,7 @@ export function installNatives(ctx: vm.Context, timeZone: string): void {
   g["__ytapiFormatArg"] = formatArg;
 
   installFunctionToString(ctx);
+  return () => clearSandboxTimers(liveTimers);
 }
 
 /**

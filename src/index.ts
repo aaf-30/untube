@@ -8,7 +8,7 @@ import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import { downloadVideoParallel } from './downloader.js'
 import { ytmusic, YTMusicSearchResult, SearchYTMusicOptions, YTMusicTrackInfo, getTrackInfo } from './ytmusic.js'
-import { mintLocalPoToken, closeMinter } from './pot/local.js'
+import { mintLocalPoTokenWithExpiry, resetLocalMinter, closeMinter } from './pot/local.js'
 
 const globalPreprocessedPlayerCache = new Map<string, any>()
 
@@ -16,6 +16,7 @@ interface CachedPoToken {
     poToken: string
     visitorData?: string
     expires: number
+    route?: string
 }
 
 /**
@@ -87,17 +88,18 @@ async function fetchPoToken(
 async function getPoToken(
     providerUrl: string,
     contentBinding: string | undefined,
-    dispatcher: any
+    dispatcher: any,
+    proxy?: string
 ): Promise<CachedPoToken | null> {
     const endpoint = resolvePotEndpoint(providerUrl)
-    const cacheKey = `${endpoint}|${contentBinding || ''}`
+    const cacheKey = JSON.stringify([endpoint, proxy || '', contentBinding || ''])
     const cached = poTokenCache.get(cacheKey)
     if (cached && cached.expires > Date.now()) return cached
 
     const fresh = await fetchPoToken(endpoint, contentBinding, dispatcher)
     if (!fresh) return null
 
-    const entry: CachedPoToken = { ...fresh, expires: Date.now() + POT_CACHE_TTL_MS }
+    const entry: CachedPoToken = { ...fresh, expires: Date.now() + POT_CACHE_TTL_MS, route: proxy || '' }
     cachePoToken(cacheKey, entry)
     return entry
 }
@@ -112,24 +114,26 @@ function cachePoToken(cacheKey: string, entry: CachedPoToken): void {
     }
 }
 
-/**
- * Mint a PO token in-process (see `./pot/local.ts`) when no external provider is configured.
- * Returns null instead of throwing: a missing token only means some clients' URLs will 403,
- * which is how the package behaved before a provider was configured at all.
- */
-async function getLocalPoToken(contentBinding: string): Promise<string | null> {
-    const cacheKey = `local|${contentBinding}`
+/** Mint locally and never cache beyond the underlying integrity token's lifetime. */
+async function getLocalPoToken(contentBinding: string, proxy?: string): Promise<string> {
+    const cacheKey = JSON.stringify(['local', proxy || '', contentBinding])
     const cached = poTokenCache.get(cacheKey)
     if (cached && cached.expires > Date.now()) return cached.poToken
 
     try {
-        const poToken = await mintLocalPoToken(contentBinding)
-        cachePoToken(cacheKey, { poToken, expires: Date.now() + POT_CACHE_TTL_MS })
-        return poToken
-    } catch (err) {
-        console.warn('Failed to mint a PO token locally; continuing without one:', (err as Error).message)
-        return null
+        const result = await mintLocalPoTokenWithExpiry(contentBinding, proxy)
+        cachePoToken(cacheKey, { ...result, expires: Math.min(result.expires, Date.now() + POT_CACHE_TTL_MS), route: proxy || '' })
+        return result.poToken
+    } catch (cause) {
+        throw new Error('Failed to mint a required GVS PO token for mweb', { cause })
     }
+}
+
+function invalidatePoTokens(proxy?: string): void {
+    for (const [key, entry] of poTokenCache) {
+        if (entry.route === (proxy || '')) poTokenCache.delete(key)
+    }
+    resetLocalMinter(proxy)
 }
 
 export interface YouTubeFormat {
@@ -251,6 +255,21 @@ export interface GetVideoInfoOptions {
  * @returns Promise<VideoInfo>
  */
 async function getVideoInfo(idOrUrl: string, options: GetVideoInfoOptions = {}): Promise<VideoInfo> {
+    const dispatcher = options.proxy ? new ProxyAgent(options.proxy) : undefined
+    try {
+        return await getVideoInfoAttempt(idOrUrl, options, { refreshed: new Set(), rejected: new Set() }, dispatcher)
+    } finally {
+        await dispatcher?.destroy().catch(() => {})
+    }
+}
+
+interface ExtractionAttempts {
+    refreshed: Set<string>
+    rejected: Set<string>
+    hasAuthCookies?: boolean
+}
+
+async function getVideoInfoAttempt(idOrUrl: string, options: GetVideoInfoOptions, attempts: ExtractionAttempts, dispatcher?: ProxyAgent): Promise<VideoInfo> {
     const videoId = extractVideoId(idOrUrl)
     if (!videoId) {
         throw new Error(/(?:\/playlist|\blist=)/.test(idOrUrl)
@@ -264,9 +283,7 @@ async function getVideoInfo(idOrUrl: string, options: GetVideoInfoOptions = {}):
     // Set-Cookie that clears the auth cookies, and those are saved back to the file.
     // Reading it up front is what makes `has_auth_cookies && !logged_in` mean "expired"
     // rather than "no cookies were provided".
-    const hasAuthCookies = hasAuthCookiesIn(cm.jar, 'https://www.youtube.com')
-
-    const dispatcher = options.proxy ? new ProxyAgent(options.proxy) : undefined
+    const hasAuthCookies = attempts.hasAuthCookies ??= hasAuthCookiesIn(cm.jar, 'https://www.youtube.com')
 
     const watchUrl = `https://www.youtube.com/watch?v=${videoId}`
     const cookieString = cm.getCookieString(watchUrl)
@@ -345,7 +362,7 @@ async function getVideoInfo(idOrUrl: string, options: GetVideoInfoOptions = {}):
     let generatedPoToken: string | undefined = undefined
     let successfulClient: string = ''
 
-    for (const clientKey of candidateClientNames) {
+    for (const clientKey of candidateClientNames.filter((name) => !attempts.rejected.has(name))) {
         generatedPoToken = undefined;
         const clientConfig = CLIENT_CONFIGS[clientKey]!
         const clientVersion = (clientKey === 'mweb' && ytcfg.INNERTUBE_CLIENT_VERSION) ? ytcfg.INNERTUBE_CLIENT_VERSION : clientConfig.clientVersion
@@ -385,7 +402,7 @@ async function getVideoInfo(idOrUrl: string, options: GetVideoInfoOptions = {}):
             //  `serviceIntegrityDimensions`. No remaining client needs one.)
             const binding = gvsBindToVideoId ? videoId : visitorData
             if (options.potProviderUrl) {
-                const pot = await getPoToken(options.potProviderUrl, binding, dispatcher)
+                const pot = await getPoToken(options.potProviderUrl, binding, dispatcher, options.proxy)
                 if (pot) {
                     generatedPoToken = pot.poToken
                     // The provider echoes the binding it used, so the request must identify
@@ -393,8 +410,11 @@ async function getVideoInfo(idOrUrl: string, options: GetVideoInfoOptions = {}):
                     if (!gvsBindToVideoId && pot.visitorData) clientVisitorData = pot.visitorData
                 }
             } else if (binding) {
-                generatedPoToken = await getLocalPoToken(binding) ?? undefined
+                generatedPoToken = await getLocalPoToken(binding, options.proxy)
             }
+        }
+        if (clientKey === 'mweb' && !generatedPoToken) {
+            throw new Error('A GVS PO token is required for mweb, but the provider returned no token or the content binding is missing')
         }
         if (clientVisitorData) {
             clientPayload.visitorData = clientVisitorData
@@ -472,26 +492,6 @@ async function getVideoInfo(idOrUrl: string, options: GetVideoInfoOptions = {}):
                 if (usableAdaptive.length * 2 < adaptiveFmts.length) {
                     lastError = new Error(`YouTube Error (${clientKey}): Soft-block detected (${usableAdaptive.length}/${adaptiveFmts.length} adaptive formats usable; SABR-only response)`)
                     continue
-                }
-            }
-
-            // Test CDN URL for 403 Forbidden (Prioritizing itag 140 / m4a audio).
-            // A URL that still carries an `n` challenge is answered with 403 until that
-            // challenge is solved further below, so it cannot be probed meaningfully here.
-            const testFormat = fmts.find((f: any) => f.itag === 140 && f.url) || fmts.find((f: any) => f.url)
-            if (testFormat) {
-                const testUrlObj = new URL(testFormat.url)
-                if (!testUrlObj.searchParams.has('n')) {
-                    if (generatedPoToken) testUrlObj.searchParams.set('pot', generatedPoToken)
-                    try {
-                        const headRes = await fetch(testUrlObj.toString(), { method: 'HEAD', dispatcher } as any)
-                        if (headRes.status === 403) {
-                            lastError = new Error(`YouTube Error (${clientKey}): CDN returned 403 Forbidden`)
-                            continue
-                        }
-                    } catch (e) {
-                        // Ignore network errors for HEAD check
-                    }
                 }
             }
 
@@ -621,6 +621,41 @@ async function getVideoInfo(idOrUrl: string, options: GetVideoInfoOptions = {}):
                 }
             }
         }
+    }
+
+    // Probe only the final URL, after both signature/n solving and PO token attachment.
+    const probeFormat = allFormats.find((f) => f.itag === 140 && f.url) || allFormats.find((f) => f.url)
+    let cdnForbidden = false
+    if (probeFormat) {
+        try {
+            const probe = await fetch(probeFormat.url, {
+                method: 'GET',
+                headers: {
+                    Range: 'bytes=0-0',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    Origin: 'https://www.youtube.com',
+                    Referer: 'https://www.youtube.com/'
+                },
+                dispatcher,
+                signal: AbortSignal.timeout(10_000)
+            })
+            cdnForbidden = probe.status === 403
+            await probe.body?.cancel()
+        } catch {
+            // A timeout or unsupported probe must not hide otherwise available metadata.
+        }
+    }
+    if (cdnForbidden) {
+        if (successfulClient === 'mweb' && !attempts.refreshed.has(successfulClient)) {
+            attempts.refreshed.add(successfulClient)
+            invalidatePoTokens(options.proxy)
+            return getVideoInfoAttempt(idOrUrl, options, attempts, dispatcher)
+        }
+        attempts.rejected.add(successfulClient)
+        if (!options.client && Object.keys(CLIENT_CONFIGS).some((name) => !attempts.rejected.has(name))) {
+            return getVideoInfoAttempt(idOrUrl, options, attempts, dispatcher)
+        }
+        throw new Error(`YouTube CDN returned 403 Forbidden (${successfulClient}) after URL decryption${attempts.refreshed.has(successfulClient) ? ' and one PO token refresh' : ''}`)
     }
 
     json.videoDetails = { ...(initialPlayerResponse.videoDetails || {}), ...(json.videoDetails || {}) }
