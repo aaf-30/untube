@@ -3,7 +3,8 @@
  *
  * The minter (see `./yt/pot.ts`) runs YouTube's own BotGuard interpreter inside a sandbox and
  * returns a token bound to a content binding — the video ID when YouTube runs the
- * `html5_generate_content_po_token` experiment, the visitor data otherwise.
+ * `html5_generate_content_po_token` experiment, the account Data Sync ID when logged in,
+ * or visitor data for guests.
  *
  * Ported from the author's `ytapi` experiment (GPL-3.0-or-later); `assets/vendor/*.js` come from
  * YMusicV4 (GPL-3.0) and are shipped read-only, which is why this package is GPL-3.0-or-later too.
@@ -33,7 +34,7 @@ function getSession(proxy?: string): Promise<YtSession> {
 /**
  * Mint a PO token for a content binding.
  *
- * @param binding A video ID or a visitor data string.
+ * @param binding A video ID, account Data Sync ID, or visitor data string.
  * @returns Websafe base64. This matters when the token is used as the `pot=` query parameter of a
  *   CDN URL: the minter hands back standard base64, which YouTube rejects (403) unless `+` and `/`
  *   are swapped for `-` and `_`.

@@ -14,7 +14,6 @@ const globalPreprocessedPlayerCache = new Map<string, any>()
 
 interface CachedPoToken {
     poToken: string
-    visitorData?: string
     expires: number
     route?: string
 }
@@ -25,6 +24,11 @@ interface CachedPoToken {
 function hasAuthCookiesIn(jar: { getCookiesSync: (url: string) => any[] }, url: string): boolean {
     const names = new Set(jar.getCookiesSync(url).map((c) => c.key))
     return ['SAPISID', '__Secure-1PAPISID', '__Secure-3PAPISID'].some((name) => names.has(name)) && names.has('LOGIN_INFO')
+}
+
+interface GvsContentBinding {
+    type: 'video' | 'session' | 'visitor'
+    value: string
 }
 
 const poTokenCache = new Map<string, CachedPoToken>()
@@ -50,19 +54,19 @@ function resolvePotEndpoint(providerUrl: string): string {
 
 /**
  * Request a PO token from an external provider (e.g. bgutil-ytdlp-pot-provider).
- * The token must be bound to the same visitor data that is used for the
- * InnerTube request, otherwise YouTube rejects it.
+ * The provider must mint for the requested video, account session, or visitor.
+ * A returned content binding is never used to change the InnerTube identity.
  */
 async function fetchPoToken(
     endpoint: string,
-    contentBinding: string | undefined,
+    contentBinding: GvsContentBinding,
     dispatcher: any
-): Promise<{ poToken: string; visitorData?: string } | null> {
+): Promise<{ poToken: string } | null> {
     try {
         const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(contentBinding ? { content_binding: contentBinding } : {}),
+            body: JSON.stringify({ content_binding: contentBinding.value }),
             dispatcher
         } as any)
         if (!res.ok) {
@@ -71,14 +75,18 @@ async function fetchPoToken(
         }
         const data: any = await res.json()
         const poToken = data?.poToken || data?.po_token
-        if (!poToken) {
+        if (typeof poToken !== 'string' || !poToken) {
             console.warn('PO Token provider response did not contain a token')
             return null
         }
-        return {
-            poToken,
-            visitorData: data?.contentBinding || data?.visitor_data || data?.visitorData
+        const echoedBinding = data?.contentBinding ?? data?.content_binding
+        const echoedVisitor = data?.visitor_data ?? data?.visitorData
+        if ((echoedBinding !== undefined && echoedBinding !== contentBinding.value)
+            || (contentBinding.type === 'visitor' && echoedVisitor !== undefined && echoedVisitor !== contentBinding.value)) {
+            console.warn('PO Token provider returned a different content binding; refusing a mismatched token')
+            return null
         }
+        return { poToken: poToken.replace(/\+/g, '-').replace(/\//g, '_') }
     } catch (err) {
         console.warn('Failed to fetch PO Token from provider:', (err as Error).message)
         return null
@@ -87,12 +95,12 @@ async function fetchPoToken(
 
 async function getPoToken(
     providerUrl: string,
-    contentBinding: string | undefined,
+    contentBinding: GvsContentBinding,
     dispatcher: any,
     proxy?: string
 ): Promise<CachedPoToken | null> {
     const endpoint = resolvePotEndpoint(providerUrl)
-    const cacheKey = JSON.stringify([endpoint, proxy || '', contentBinding || ''])
+    const cacheKey = JSON.stringify([endpoint, proxy || '', contentBinding.type, contentBinding.value])
     const cached = poTokenCache.get(cacheKey)
     if (cached && cached.expires > Date.now()) return cached
 
@@ -115,13 +123,13 @@ function cachePoToken(cacheKey: string, entry: CachedPoToken): void {
 }
 
 /** Mint locally and never cache beyond the underlying integrity token's lifetime. */
-async function getLocalPoToken(contentBinding: string, proxy?: string): Promise<string> {
-    const cacheKey = JSON.stringify(['local', proxy || '', contentBinding])
+async function getLocalPoToken(contentBinding: GvsContentBinding, proxy?: string): Promise<string> {
+    const cacheKey = JSON.stringify(['local', proxy || '', contentBinding.type, contentBinding.value])
     const cached = poTokenCache.get(cacheKey)
     if (cached && cached.expires > Date.now()) return cached.poToken
 
     try {
-        const result = await mintLocalPoTokenWithExpiry(contentBinding, proxy)
+        const result = await mintLocalPoTokenWithExpiry(contentBinding.value, proxy)
         cachePoToken(cacheKey, { ...result, expires: Math.min(result.expires, Date.now() + POT_CACHE_TTL_MS), route: proxy || '' })
         return result.poToken
     } catch (cause) {
@@ -337,6 +345,14 @@ async function getVideoInfoAttempt(idOrUrl: string, options: GetVideoInfoOptions
         } catch { }
     }
 
+    // Keep the full Data Sync ID (including ||) as the account token binding.
+    const dataSyncId = [
+        ytcfg.DATASYNC_ID,
+        ytcfg.responseContext?.mainAppWebResponseContext?.datasyncId,
+        initialPlayerResponse.responseContext?.mainAppWebResponseContext?.datasyncId
+    ].find((value): value is string => typeof value === 'string' && value.length > 0)
+    const authenticated = loggedIn ?? hasAuthCookies
+
     const apiUrl = `https://www.youtube.com/youtubei/v1/player?key=${apiKey}&prettyPrint=false`
     const apiCookieString = cm.getCookieString(apiUrl)
     const sapisidCookie = cm.jar.getCookiesSync(apiUrl).find((c: any) => c.key === 'SAPISID')
@@ -393,23 +409,29 @@ async function getVideoInfoAttempt(idOrUrl: string, options: GetVideoInfoOptions
                 }
             }
         }
-        let clientVisitorData: string | undefined = visitorData
+        const clientVisitorData: string | undefined = visitorData
         if (clientKey !== 'visionos') {
-            // GVS token: appended to each CDN URL as `pot=`. Required by mweb. It is bound
-            // to the visitor data this request identifies as -- or to the video ID when the
-            // experiment above is active.
+            // GVS tokens use the video ID during the experiment, the account Data Sync
+            // ID when authenticated, and visitor data for guests. Cookies alone do not
+            // make a visitor-bound token valid for an account session.
             // (A player-context token is a different thing: it goes in
             //  `serviceIntegrityDimensions`. No remaining client needs one.)
-            const binding = gvsBindToVideoId ? videoId : visitorData
+            const binding: GvsContentBinding = gvsBindToVideoId
+                ? { type: 'video', value: videoId }
+                : authenticated
+                    ? { type: 'session', value: dataSyncId || '' }
+                    : { type: 'visitor', value: visitorData || '' }
+            if (!binding.value) {
+                throw new Error(authenticated && !gvsBindToVideoId
+                    ? 'A GVS PO token for logged-in mweb requires an account Data Sync ID, but YouTube did not provide one'
+                    : 'A GVS PO token for guest mweb requires visitor data, but YouTube did not provide it')
+            }
             if (options.potProviderUrl) {
                 const pot = await getPoToken(options.potProviderUrl, binding, dispatcher, options.proxy)
                 if (pot) {
                     generatedPoToken = pot.poToken
-                    // The provider echoes the binding it used, so the request must identify
-                    // with the same visitor data. A video-ID binding is not visitor data.
-                    if (!gvsBindToVideoId && pot.visitorData) clientVisitorData = pot.visitorData
                 }
-            } else if (binding) {
+            } else {
                 generatedPoToken = await getLocalPoToken(binding, options.proxy)
             }
         }
@@ -433,6 +455,14 @@ async function getVideoInfoAttempt(idOrUrl: string, options: GetVideoInfoOptions
         if (clientKey !== 'visionos') {
             if (apiCookieString) {
                 apiHeaders['Cookie'] = apiCookieString
+            }
+            if (authenticated) {
+                const [firstSessionId, secondSessionId] = dataSyncId?.split('||') || []
+                const delegatedSessionId = ytcfg.DELEGATED_SESSION_ID || (secondSessionId ? firstSessionId : undefined)
+                if (delegatedSessionId) apiHeaders['X-Goog-PageId'] = delegatedSessionId
+                if (ytcfg.SESSION_INDEX != null || delegatedSessionId) {
+                    apiHeaders['X-Goog-AuthUser'] = String(ytcfg.SESSION_INDEX ?? 0)
+                }
             }
             if (sapisidCookie) {
                 const timestamp = Math.floor(Date.now() / 1000).toString()

@@ -140,6 +140,8 @@ stream.pipe(fs.createWriteStream('video.mp4'));
 
 > **Note on PO tokens:** `mweb` needs a PO token for its stream URLs to be accepted by the CDN; `visionos` works without one, so a plain `getVideoInfo(id)` never boots the minter. Token minting runs in-process by default: the first call that needs one costs a few seconds (it boots a sandbox and evaluates YouTube's BotGuard interpreter), and later calls reuse the cached token or mint in well under a second. `closeMinter()` releases all local minter sessions if you want the process to exit promptly. Local minting uses the configured `proxy`; sessions and token caches are separated by proxy URL. Integrity tokens refresh before their reported expiry, and cached PO tokens never outlive that expiry.
 
+`mweb` GVS tokens bind to the video ID when YouTube enables the content-token experiment, otherwise to the full account Data Sync ID for logged-in sessions or visitor data for guests. Missing account binding fails explicitly instead of minting a guest token. Provider binding echoes must match the requested binding and never replace visitor data.
+
 `getVideoInfo()` probes a final media URL after signature solving and token attachment. If the CDN returns 403 for `mweb`, it discards cached tokens for that proxy, resets the local minter, and retrieves fresh metadata once. A repeated 403 fails or falls back to another available client. Minting failures on `mweb` now reject the request instead of returning URLs without a PO token. Network errors during the probe remain best-effort.
 
 ---
